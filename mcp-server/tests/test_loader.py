@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from vml_audio_lab.tools.loader import _is_youtube_url, load_track
+from vml_audio_lab.tools.loader import _is_youtube_url, load_track, load_y
 
 FIXTURES = Path(__file__).parent / "fixtures"
 SINE_WAV = FIXTURES / "sine_440hz_3s.wav"
@@ -50,6 +50,41 @@ class TestLoadTrackLocal:
     def test_file_path_is_resolved(self) -> None:
         result = load_track(str(SINE_WAV))
         assert Path(result["file_path"]).is_absolute()
+
+    def test_unsupported_extension_rejected(self, tmp_path: Path) -> None:
+        txt_file = tmp_path / "not_audio.txt"
+        txt_file.write_text("not audio")
+        with pytest.raises(ValueError, match="サポートされていないファイル形式"):
+            load_track(str(txt_file))
+
+    def test_cache_hit_returns_same_data(self) -> None:
+        result1 = load_track(str(SINE_WAV))
+        result2 = load_track(str(SINE_WAV))
+        y1 = np.load(result1["y_path"])
+        y2 = np.load(result2["y_path"])
+        np.testing.assert_array_equal(y1, y2)
+
+
+class TestLoadY:
+    """load_y セキュリティテスト"""
+
+    def test_loads_valid_cached_data(self) -> None:
+        result = load_track(str(SINE_WAV))
+        y = load_y(result["y_path"])
+        assert len(y) > 0
+
+    def test_rejects_path_outside_cache_dir(self) -> None:
+        with pytest.raises(ValueError, match="キャッシュディレクトリ外"):
+            load_y("/etc/passwd")
+
+    def test_rejects_nonexistent_path_in_cache_dir(self) -> None:
+        import tempfile
+
+        cache_dir = Path(tempfile.gettempdir()) / "vml_audio_lab"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        fake_path = str(cache_dir / "nonexistent.npy")
+        with pytest.raises(FileNotFoundError):
+            load_y(fake_path)
 
 
 class TestIsYoutubeUrl:
@@ -96,10 +131,21 @@ class TestLoadTrackYouTube:
             "uploader": "Test Channel",
         }
 
-        with patch("vml_audio_lab.tools.loader._download_youtube") as mock_dl:
-            mock_dl.return_value = (str(wav_path), {**fake_info, "youtube_url": "https://youtu.be/test"})
+        # 前回テストのキャッシュが残っている可能性があるので削除
+        import tempfile
 
-            result = load_track("https://youtu.be/test123ABC")
+        from vml_audio_lab.tools.loader import _cache_key
+
+        url = "https://youtu.be/test123ABC"
+        cache_dir = Path(tempfile.gettempdir()) / "vml_audio_lab"
+        cached_npy = cache_dir / f"{_cache_key(url)}_y.npy"
+        if cached_npy.exists():
+            cached_npy.unlink()
+
+        with patch("vml_audio_lab.tools.loader._download_youtube") as mock_dl:
+            mock_dl.return_value = (str(wav_path), {**fake_info, "youtube_url": url})
+
+            result = load_track(url)
 
         assert result["source"] == "youtube"
         assert result["title"] == "Test Video"

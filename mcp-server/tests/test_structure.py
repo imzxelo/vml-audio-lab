@@ -80,6 +80,27 @@ class TestFormatTime:
         assert _format_time(300.0) == "5:00"
 
 
+@pytest.fixture(scope="module")
+def subsecond_y_path(tmp_path_factory: pytest.TempPathFactory) -> str:
+    """極短音声(0.5秒)"""
+    sr = 22050
+    y = np.zeros(int(sr * 0.5), dtype=np.float32)
+    wav_path = tmp_path_factory.mktemp("audio") / "half_second.wav"
+    sf.write(str(wav_path), y, sr)
+    result = load_track(str(wav_path))
+    return result["y_path"]
+
+
+class TestDetectStructureSubSecond:
+    """極短音声での構造検出テスト"""
+
+    def test_returns_single_section(self, subsecond_y_path: str) -> None:
+        result = detect_structure(subsecond_y_path)
+        assert result["n_segments"] == 1
+        assert result["sections"][0]["label"] == "Full Track"
+        assert result["sections"][0]["start"] == 0.0
+
+
 class TestDetectStructureShort:
     """短い音声での構造検出テスト"""
 
@@ -103,8 +124,8 @@ class TestDetectStructureShort:
         result = detect_structure(short_y_path)
         assert result["sections"][0]["start"] == 0.0
 
-    def test_y_path_not_found(self) -> None:
-        with pytest.raises(FileNotFoundError):
+    def test_y_path_outside_cache_dir(self) -> None:
+        with pytest.raises(ValueError, match="キャッシュディレクトリ外"):
             detect_structure("/nonexistent/y.npy")
 
 

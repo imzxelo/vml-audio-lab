@@ -16,9 +16,12 @@ _CACHE_DIR = Path(tempfile.gettempdir()) / "vml_audio_lab"
 # サンプリングレート（librosa デフォルト）
 DEFAULT_SR = 22050
 
+# 許可する音声ファイル拡張子
+_ALLOWED_EXTENSIONS = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".aac", ".wma", ".opus"}
+
 # YouTube URL パターン
 _YT_PATTERN = re.compile(
-    r"(https?://)?(www\.)?(youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)[\w\-]+"
+    r"(https?://)?(www\.)?(youtube\.com/watch\?v=|youtu\.be/|youtube\.com/shorts/)[\w\-]+$"
 )
 
 
@@ -28,14 +31,54 @@ def _ensure_cache_dir() -> Path:
     return _CACHE_DIR
 
 
-def _cache_key(source: str) -> str:
-    """ソース文字列からキャッシュキーを生成する。"""
-    return hashlib.sha256(source.encode()).hexdigest()[:16]
+def _cache_key(source: str, offset: float = 0.0, duration: float | None = None) -> str:
+    """ソース文字列とパラメータからキャッシュキーを生成する。"""
+    key_str = f"{source}|offset={offset}|duration={duration}"
+    return hashlib.sha256(key_str.encode()).hexdigest()[:16]
 
 
 def _is_youtube_url(source: str) -> bool:
     """YouTube URL かどうかを判定する。"""
     return bool(_YT_PATTERN.match(source))
+
+
+def _validate_local_path(file_path: str) -> str:
+    """ローカルファイルパスを検証し、解決済みパスを返す。
+
+    Raises:
+        FileNotFoundError: ファイルが存在しない場合
+        ValueError: サポートされていないファイル形式の場合
+    """
+    path = Path(file_path).expanduser().resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"音声ファイルが見つかりません: {path}")
+    if path.suffix.lower() not in _ALLOWED_EXTENSIONS:
+        raise ValueError(
+            f"サポートされていないファイル形式です: {path.suffix} "
+            f"(許可: {', '.join(sorted(_ALLOWED_EXTENSIONS))})"
+        )
+    return str(path)
+
+
+def load_y(y_path: str) -> np.ndarray:
+    """キャッシュされた音声データを読み込む。
+
+    キャッシュディレクトリ内のパスのみ許可する。
+
+    Args:
+        y_path: load_track で返された音声データのパス
+
+    Raises:
+        ValueError: キャッシュディレクトリ外のパスが指定された場合
+        FileNotFoundError: ファイルが存在しない場合
+    """
+    path = Path(y_path).resolve()
+    cache_dir = _CACHE_DIR.resolve()
+    if not path.is_relative_to(cache_dir):
+        raise ValueError(f"不正なパスです（キャッシュディレクトリ外）: {y_path}")
+    if not path.exists():
+        raise FileNotFoundError(f"音声データが見つかりません: {y_path}")
+    return np.load(path)
 
 
 def _download_youtube(url: str) -> tuple[str, dict]:
@@ -117,35 +160,39 @@ def load_track(
         RuntimeError: YouTube ダウンロードに失敗した場合
     """
     yt_meta: dict = {}
+    local_path: str = ""
+
+    # キャッシュヒット確認（ダウンロード/ロード前にチェック）
+    cache_dir = _ensure_cache_dir()
+    key = _cache_key(file_path, offset=offset, duration=duration)
+    y_path = str(cache_dir / f"{key}_y.npy")
+    cache_hit = Path(y_path).exists()
 
     if _is_youtube_url(file_path):
-        local_path, yt_meta = _download_youtube(file_path)
         source = "youtube"
+        if not cache_hit:
+            local_path, yt_meta = _download_youtube(file_path)
     else:
-        local_path = str(Path(file_path).expanduser().resolve())
-        if not Path(local_path).exists():
-            raise FileNotFoundError(f"音声ファイルが見つかりません: {local_path}")
+        local_path = _validate_local_path(file_path)
         source = "local"
 
-    y, sr = librosa.load(
-        path=local_path,
-        sr=DEFAULT_SR,
-        mono=True,
-        offset=offset,
-        duration=duration,
-    )
+    if cache_hit:
+        y = np.load(y_path)
+    else:
+        y, _ = librosa.load(
+            path=local_path,
+            sr=DEFAULT_SR,
+            mono=True,
+            offset=offset,
+            duration=duration,
+        )
+        np.save(y_path, y)
 
-    # .npy でキャッシュ
-    cache_dir = _ensure_cache_dir()
-    key = _cache_key(file_path)
-    y_path = str(cache_dir / f"{key}_y.npy")
-    np.save(y_path, y)
-
-    duration_sec = float(librosa.get_duration(y=y, sr=sr))
+    duration_sec = float(librosa.get_duration(y=y, sr=DEFAULT_SR))
 
     result = {
         "y_path": y_path,
-        "sr": sr,
+        "sr": DEFAULT_SR,
         "duration_sec": round(duration_sec, 2),
         "n_samples": len(y),
         "file_path": local_path,

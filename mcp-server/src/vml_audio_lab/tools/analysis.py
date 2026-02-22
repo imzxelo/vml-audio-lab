@@ -2,27 +2,12 @@
 
 from __future__ import annotations
 
-import io
-from pathlib import Path
-
 import librosa
-import matplotlib
-import matplotlib.pyplot as plt
 import numpy as np
 from essentia.standard import KeyExtractor
 
-from vml_audio_lab.tools.loader import DEFAULT_SR
-
-# GUI バックエンド不要
-matplotlib.use("Agg")
-
-
-def _load_y(y_path: str) -> np.ndarray:
-    """キャッシュされた音声データを読み込む。"""
-    path = Path(y_path)
-    if not path.exists():
-        raise FileNotFoundError(f"音声データが見つかりません: {y_path}")
-    return np.load(y_path)
+from vml_audio_lab.tools.loader import DEFAULT_SR, load_y
+from vml_audio_lab.utils.plotting import fig_to_png, plt
 
 
 def detect_bpm(y_path: str) -> dict:
@@ -35,7 +20,7 @@ def detect_bpm(y_path: str) -> dict:
         dict:
             - bpm: 推定BPM (float)
     """
-    y = _load_y(y_path)
+    y = load_y(y_path)
     tempo, _ = librosa.beat.beat_track(y=y, sr=DEFAULT_SR)
     bpm = float(np.atleast_1d(tempo)[0])
     return {"bpm": round(bpm, 1)}
@@ -56,7 +41,7 @@ def detect_key(y_path: str) -> dict:
             - key_label: 表示用 (例: "Fm")
             - strength: 確信度 (0.0〜1.0)
     """
-    y = _load_y(y_path)
+    y = load_y(y_path)
     extractor = KeyExtractor()
     key, scale, strength = extractor(y)
     key_label = f"{key}m" if scale == "minor" else key
@@ -77,7 +62,7 @@ def energy_curve(y_path: str) -> bytes:
     Returns:
         bytes: PNG 画像データ
     """
-    y = _load_y(y_path)
+    y = load_y(y_path)
     rms = librosa.feature.rms(y=y)[0]
     times = librosa.times_like(rms, sr=DEFAULT_SR)
 
@@ -90,8 +75,4 @@ def energy_curve(y_path: str) -> bytes:
     ax.set_xlim(times[0], times[-1])
     fig.tight_layout()
 
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=100)
-    plt.close(fig)
-    buf.seek(0)
-    return buf.read()
+    return fig_to_png(fig)

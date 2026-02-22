@@ -2,18 +2,12 @@
 
 from __future__ import annotations
 
-import io
-from pathlib import Path
-
 import librosa
 import librosa.display
-import matplotlib
-import matplotlib.pyplot as plt
 import numpy as np
 
-from vml_audio_lab.tools.loader import DEFAULT_SR
-
-matplotlib.use("Agg")
+from vml_audio_lab.tools.loader import DEFAULT_SR, load_y
+from vml_audio_lab.utils.plotting import fig_to_png, plt
 
 # 共通カラー設定
 _SECTION_COLORS = {
@@ -26,23 +20,6 @@ _SECTION_COLORS = {
 _DEFAULT_COLOR = "#BDBDBD"
 
 
-def _load_y(y_path: str) -> np.ndarray:
-    """キャッシュされた音声データを読み込む。"""
-    path = Path(y_path)
-    if not path.exists():
-        raise FileNotFoundError(f"音声データが見つかりません: {y_path}")
-    return np.load(y_path)
-
-
-def _fig_to_png(fig: plt.Figure) -> bytes:
-    """matplotlib Figure を PNG bytes に変換して閉じる。"""
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=100, bbox_inches="tight")
-    plt.close(fig)
-    buf.seek(0)
-    return buf.read()
-
-
 def spectrogram(y_path: str) -> bytes:
     """メルスペクトログラムの画像を生成する。
 
@@ -52,7 +29,7 @@ def spectrogram(y_path: str) -> bytes:
     Returns:
         bytes: PNG 画像データ
     """
-    y = _load_y(y_path)
+    y = load_y(y_path)
     S = librosa.feature.melspectrogram(y=y, sr=DEFAULT_SR, n_mels=128)
     S_dB = librosa.power_to_db(S, ref=np.max)
 
@@ -69,7 +46,7 @@ def spectrogram(y_path: str) -> bytes:
     ax.set_title("Mel Spectrogram")
     fig.tight_layout()
 
-    return _fig_to_png(fig)
+    return fig_to_png(fig)
 
 
 def waveform_overview(
@@ -87,7 +64,7 @@ def waveform_overview(
     Returns:
         bytes: PNG 画像データ
     """
-    y = _load_y(y_path)
+    y = load_y(y_path)
     duration = librosa.get_duration(y=y, sr=DEFAULT_SR)
     times = np.linspace(0, duration, len(y))
 
@@ -125,4 +102,4 @@ def waveform_overview(
     ax.set_ylim(-1.0, 1.0)
     fig.tight_layout()
 
-    return _fig_to_png(fig)
+    return fig_to_png(fig)

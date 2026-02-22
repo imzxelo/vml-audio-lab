@@ -36,8 +36,8 @@ class TestSpectrogram:
         data = spectrogram(y_path)
         assert len(data) > 5000
 
-    def test_y_path_not_found(self) -> None:
-        with pytest.raises(FileNotFoundError):
+    def test_y_path_outside_cache_dir(self) -> None:
+        with pytest.raises(ValueError, match="キャッシュディレクトリ外"):
             spectrogram("/nonexistent/y.npy")
 
 
@@ -64,6 +64,6 @@ class TestWaveformOverview:
         data = waveform_overview(y_path)
         assert len(data) > 3000
 
-    def test_y_path_not_found(self) -> None:
-        with pytest.raises(FileNotFoundError):
+    def test_y_path_outside_cache_dir(self) -> None:
+        with pytest.raises(ValueError, match="キャッシュディレクトリ外"):
             waveform_overview("/nonexistent/y.npy")

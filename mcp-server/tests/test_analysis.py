@@ -63,8 +63,8 @@ class TestDetectBpm:
         result = detect_bpm(beat_fixture)
         assert abs(result["bpm"] - 120.0) < 5.0, f"Expected ~120 BPM, got {result['bpm']}"
 
-    def test_y_path_not_found(self) -> None:
-        with pytest.raises(FileNotFoundError):
+    def test_y_path_outside_cache_dir(self) -> None:
+        with pytest.raises(ValueError, match="キャッシュディレクトリ外"):
             detect_bpm("/nonexistent/y.npy")
 
 
@@ -91,8 +91,8 @@ class TestDetectKey:
         assert len(label) >= 1
         assert label[0].isupper()
 
-    def test_y_path_not_found(self) -> None:
-        with pytest.raises(FileNotFoundError):
+    def test_y_path_outside_cache_dir(self) -> None:
+        with pytest.raises(ValueError, match="キャッシュディレクトリ外"):
             detect_key("/nonexistent/y.npy")
 
 
@@ -109,6 +109,6 @@ class TestEnergyCurve:
         data = energy_curve(y_path)
         assert len(data) > 1000  # 最低限のサイズ
 
-    def test_y_path_not_found(self) -> None:
-        with pytest.raises(FileNotFoundError):
+    def test_y_path_outside_cache_dir(self) -> None:
+        with pytest.raises(ValueError, match="キャッシュディレクトリ外"):
             energy_curve("/nonexistent/y.npy")

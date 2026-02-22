@@ -2,20 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import librosa
 import numpy as np
 
-from vml_audio_lab.tools.loader import DEFAULT_SR
-
-
-def _load_y(y_path: str) -> np.ndarray:
-    """キャッシュされた音声データを読み込む。"""
-    path = Path(y_path)
-    if not path.exists():
-        raise FileNotFoundError(f"音声データが見つかりません: {y_path}")
-    return np.load(y_path)
+from vml_audio_lab.tools.loader import DEFAULT_SR, load_y
 
 
 def _estimate_n_segments(duration_sec: float) -> int:
@@ -59,8 +49,24 @@ def detect_structure(
             - n_segments: セクション数
             - duration_sec: 全体の長さ (秒)
     """
-    y = _load_y(y_path)
+    y = load_y(y_path)
     duration_sec = float(librosa.get_duration(y=y, sr=DEFAULT_SR))
+
+    # 極短音声（1秒未満）はクラスタリングできないので単一セクションを返す
+    if duration_sec < 1.0:
+        section = {
+            "start": 0.0,
+            "end": round(duration_sec, 2),
+            "start_label": _format_time(0.0),
+            "end_label": _format_time(duration_sec),
+            "label": "Full Track",
+            "energy": 1.0,
+        }
+        return {
+            "sections": [section],
+            "n_segments": 1,
+            "duration_sec": round(duration_sec, 2),
+        }
 
     if n_segments is None:
         n_segments = _estimate_n_segments(duration_sec)
@@ -70,11 +76,31 @@ def detect_structure(
 
     # フレーム数がセグメント数より少ない場合はガード
     if mfcc.shape[1] < n_segments:
-        n_segments = max(2, mfcc.shape[1])
+        n_segments = mfcc.shape[1]
+
+    # フレーム数が足りずクラスタリングできない場合は単一セクションを返す
+    if n_segments < 2:
+        section = {
+            "start": 0.0,
+            "end": round(duration_sec, 2),
+            "start_label": _format_time(0.0),
+            "end_label": _format_time(duration_sec),
+            "label": "Full Track",
+            "energy": 1.0,
+        }
+        return {
+            "sections": [section],
+            "n_segments": 1,
+            "duration_sec": round(duration_sec, 2),
+        }
 
     # 凝集型クラスタリングでセグメント境界を検出
     boundaries = librosa.segment.agglomerative(mfcc, k=n_segments)
     boundary_times = librosa.frames_to_time(boundaries, sr=DEFAULT_SR)
+
+    # 先頭が 0.0 でない場合は追加
+    if len(boundary_times) == 0 or boundary_times[0] > 0.0:
+        boundary_times = np.concatenate([[0.0], boundary_times])
 
     # RMS エネルギーを計算（セクションラベル付与用）
     rms = librosa.feature.rms(y=y)[0]
