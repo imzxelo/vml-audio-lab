@@ -4,6 +4,7 @@ from fastmcp import FastMCP
 
 from vml_audio_lab import __version__
 from vml_audio_lab.tools.analysis import detect_bpm, detect_key, energy_curve
+from vml_audio_lab.tools.cues import recommend_cues
 from vml_audio_lab.tools.loader import load_track
 from vml_audio_lab.tools.structure import detect_structure
 from vml_audio_lab.tools.visualize import spectrogram, waveform_overview
@@ -119,6 +120,27 @@ def visualize_waveform(
         sections: analyze_structure で返された sections リスト（省略可）
     """
     return waveform_overview(y_path, sections=sections)
+
+
+@mcp.tool
+def suggest_rekordbox_cues(
+    y_path: str,
+    n_segments: int | None = None,
+) -> dict:
+    """DJ用のRekordboxキュー案（A/B/C/D + Memory Cue）を生成する。
+
+    Args:
+        y_path: load_audio で返された y_path
+        n_segments: 構造推定のセグメント数（省略可）
+
+    Returns:
+        dict:
+            - hot_cues: A/B/C/D
+            - memory_cues: Intro/Build/Drop/Break/Outro など
+            - sections: 推定構造
+            - notes: 運用メモ
+    """
+    return recommend_cues(y_path, n_segments=n_segments)
 
 
 def main() -> None:
