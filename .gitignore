@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+
+# uv
+mcp-server/uv.lock
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Test / cache
+.pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Audio cache (temp files)
+*.npy
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Claude Code (local settings, not shared)
+.claude/settings.json
