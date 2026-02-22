@@ -21,12 +21,9 @@ def test_generate_dj_cues_from_sections_basic() -> None:
     assert "memory_cues" in result
     assert len(result["hot_cues"]) >= 4
 
-    # A/B/C/D
+    # A/B/C/D always present
     cue_names = [c["name"] for c in result["hot_cues"]]
-    assert cue_names[0] == "A"
-    assert "B" in cue_names
-    assert "C" in cue_names
-    assert "D" in cue_names
+    assert cue_names == ["A", "B", "C", "D"]
 
     # B should be first Drop
     b_cue = next(c for c in result["hot_cues"] if c["name"] == "B")
@@ -38,3 +35,15 @@ def test_generate_dj_cues_handles_empty_sections() -> None:
     assert result["hot_cues"] == []
     assert result["memory_cues"] == []
     assert len(result["notes"]) > 0
+
+
+def test_generate_dj_cues_fallback_still_returns_abcd() -> None:
+    sections = [
+        {"start": 0.0, "end": 30.0, "label": "Intro", "energy": 0.2},
+        {"start": 30.0, "end": 60.0, "label": "Build", "energy": 0.4},
+        {"start": 60.0, "end": 90.0, "label": "Outro", "energy": 0.2},
+    ]
+    result = generate_dj_cues_from_sections(sections, duration_sec=90.0)
+    names = [c["name"] for c in result["hot_cues"]]
+    assert names == ["A", "B", "C", "D"]
+    assert all(0.0 <= c["time_sec"] <= 90.0 for c in result["hot_cues"])

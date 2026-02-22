@@ -33,30 +33,51 @@ def _cache_key(source: str, offset: float = 0.0, duration: float | None = None) 
     return hashlib.sha256(key_str.encode()).hexdigest()[:16]
 
 
-def _is_youtube_url(source: str) -> bool:
-    """YouTube URL かどうかを判定する。クエリ付きURLにも対応。"""
+def _extract_youtube_video_id(source: str) -> str | None:
+    """YouTube URL から video id を抽出する。非対応URLなら None。"""
     try:
         parsed = urlparse(source)
     except Exception:
-        return False
+        return None
 
-    host = (parsed.netloc or "").lower()
+    if parsed.scheme not in {"http", "https"}:
+        return None
+
+    host = (parsed.hostname or "").lower()
     path = parsed.path or ""
     query = parse_qs(parsed.query or "")
 
-    youtube_hosts = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
+    youtube_hosts = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}
     if host not in youtube_hosts:
-        return False
+        return None
 
     if host == "youtu.be":
-        return len(path.strip("/")) > 0
+        vid = path.strip("/").split("/")[0] if path.strip("/") else ""
+        return vid or None
 
-    # youtube.com系
     if path == "/watch":
-        return "v" in query and len(query.get("v", [""])[0]) > 0
+        vid = query.get("v", [""])[0]
+        return vid or None
+
     if path.startswith("/shorts/"):
-        return len(path.split("/shorts/", 1)[1]) > 0
-    return False
+        tail = path.split("/shorts/", 1)[1]
+        vid = tail.split("/")[0]
+        return vid or None
+
+    return None
+
+
+def _canonical_source(source: str) -> str:
+    """キャッシュキー用にソースを正規化する。"""
+    vid = _extract_youtube_video_id(source)
+    if vid:
+        return f"youtube:{vid}"
+    return source
+
+
+def _is_youtube_url(source: str) -> bool:
+    """YouTube URL かどうかを判定する。クエリ付きURLにも対応。"""
+    return _extract_youtube_video_id(source) is not None
 
 
 def _validate_local_path(file_path: str) -> str:
@@ -103,12 +124,13 @@ def _download_youtube(url: str) -> tuple[str, dict]:
     import yt_dlp
 
     cache_dir = _ensure_cache_dir()
-    key = _cache_key(url)
+    key = _cache_key(_canonical_source(url))
     output_tmpl = str(cache_dir / f"{key}_yt.%(ext)s")
 
     opts = {
-        "format": "bestaudio[ext=m4a]/bestaudio/best",
+        "format": "bestaudio/best",
         "outtmpl": output_tmpl,
+        "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
     }
@@ -121,8 +143,10 @@ def _download_youtube(url: str) -> tuple[str, dict]:
         # 実際に保存されたパスを取得
         local_path = None
         requested = info.get("requested_downloads")
+        selected_format = {}
         if isinstance(requested, list) and requested:
             local_path = requested[0].get("filepath")
+            selected_format = requested[0]
         if not local_path:
             local_path = info.get("_filename")
         if not local_path:
@@ -135,11 +159,29 @@ def _download_youtube(url: str) -> tuple[str, dict]:
         "title": info.get("title", ""),
         "uploader": info.get("uploader", ""),
         "youtube_url": url,
-        "audio_ext": info.get("ext", ""),
-        "audio_abr_kbps": info.get("abr"),
-        "audio_asr_hz": info.get("asr"),
+        "video_id": _extract_youtube_video_id(url),
+        "audio_ext": selected_format.get("ext") or info.get("ext", ""),
+        "audio_abr_kbps": selected_format.get("abr") if selected_format else info.get("abr"),
+        "audio_asr_hz": selected_format.get("asr") if selected_format else info.get("asr"),
+        "audio_codec": selected_format.get("acodec") if selected_format else info.get("acodec"),
+        "format_id": selected_format.get("format_id") if selected_format else info.get("format_id"),
     }
     return str(Path(local_path).resolve()), meta
+
+
+def _write_meta(meta_path: Path, source: str, local_path: str, yt_meta: dict) -> None:
+    meta_path.write_text(
+        json.dumps(
+            {
+                "source": source,
+                "file_path": local_path,
+                "yt_meta": yt_meta,
+                "analysis_sr": DEFAULT_SR,
+                "analysis_mono": True,
+            },
+            ensure_ascii=False,
+        )
+    )
 
 
 def load_track(
@@ -152,40 +194,42 @@ def load_track(
     ローカルファイルパスまたは YouTube URL を受け取る。
     YouTubeの場合もダウンロード音源（高音質）を file_path として返すので、
     そのまま再利用できる。
-
-    Args:
-        file_path: 音声ファイルのパス、または YouTube URL
-        offset: 読み込み開始位置（秒）
-        duration: 読み込む長さ（秒）。Noneで全体を読み込む
-
-    Returns:
-        dict: メタデータとキャッシュパス
-            - y_path: 分析用音声データ(.npy)のパス
-            - sr: 分析サンプリングレート（DEFAULT_SR）
-            - duration_sec: 楽曲の長さ（秒）
-            - n_samples: サンプル数
-            - file_path: 元のファイルパス（またはYouTubeダウンロード先）
-            - source: "local" または "youtube"
-            - title/uploader/youtube_url: (YouTube のみ)
     """
     yt_meta: dict = {}
     local_path: str = ""
 
+    source = "youtube" if _is_youtube_url(file_path) else "local"
+    key_source = _canonical_source(file_path)
+
     cache_dir = _ensure_cache_dir()
-    key = _cache_key(file_path, offset=offset, duration=duration)
+    key = _cache_key(key_source, offset=offset, duration=duration)
     y_path = str(cache_dir / f"{key}_y.npy")
     meta_path = cache_dir / f"{key}_meta.json"
     cache_hit = Path(y_path).exists()
 
-    source = "youtube" if _is_youtube_url(file_path) else "local"
-
     if cache_hit:
         y = np.load(y_path)
+
+        meta_ok = False
         if meta_path.exists():
-            meta = json.loads(meta_path.read_text())
-            local_path = meta.get("file_path", "")
-            yt_meta = meta.get("yt_meta", {})
-            source = meta.get("source", source)
+            try:
+                meta = json.loads(meta_path.read_text())
+                source = meta.get("source", source)
+                local_path = str(meta.get("file_path", ""))
+                yt_meta = meta.get("yt_meta", {})
+                if local_path and Path(local_path).exists():
+                    meta_ok = True
+            except Exception:
+                meta_ok = False
+
+        # メタ情報欠損時は復元
+        if not meta_ok:
+            if source == "youtube":
+                local_path, yt_meta = _download_youtube(file_path)
+            else:
+                local_path = _validate_local_path(file_path)
+            _write_meta(meta_path, source, local_path, yt_meta)
+
     else:
         if source == "youtube":
             local_path, yt_meta = _download_youtube(file_path)
@@ -200,19 +244,7 @@ def load_track(
             duration=duration,
         )
         np.save(y_path, y)
-
-        meta_path.write_text(
-            json.dumps(
-                {
-                    "source": source,
-                    "file_path": local_path,
-                    "yt_meta": yt_meta,
-                    "analysis_sr": DEFAULT_SR,
-                    "analysis_mono": True,
-                },
-                ensure_ascii=False,
-            )
-        )
+        _write_meta(meta_path, source, local_path, yt_meta)
 
     duration_sec = float(librosa.get_duration(y=y, sr=DEFAULT_SR))
 

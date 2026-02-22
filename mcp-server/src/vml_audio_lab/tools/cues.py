@@ -30,7 +30,7 @@ def _to_cue(name: str, sec: float, kind: str = "hot") -> dict[str, Any]:
 
 
 def generate_dj_cues_from_sections(sections: list[dict[str, Any]], duration_sec: float) -> dict[str, Any]:
-    """構造情報からDJ用キューを生成する。"""
+    """構造情報からDJ用キューを生成する。A/B/C/Dは常に返す。"""
     if not sections:
         return {
             "hot_cues": [],
@@ -47,32 +47,32 @@ def generate_dj_cues_from_sections(sections: list[dict[str, Any]], duration_sec:
     )
     outro = sections[-1]
 
-    # Hot cues (A/B/C/D)
-    hot_cues: list[dict[str, Any]] = []
-
     # A: ミックスイン推奨（最初のBuild開始 / なければDrop開始 / Intro開始）
     a_time = float((build1 or drop1 or intro)["start"])
-    hot_cues.append(_to_cue("A", a_time, kind="hot"))
 
-    # B: 1st drop
-    if drop1:
-        hot_cues.append(_to_cue("B", float(drop1["start"]), kind="hot"))
-
-    # C: break in
-    if break1:
-        hot_cues.append(_to_cue("C", float(break1["start"]), kind="hot"))
+    # B: 1st drop（なければA+16秒）
+    b_time = float(drop1["start"]) if drop1 else min(float(duration_sec), a_time + 16.0)
 
     # D: 2nd drop（なければOutro手前）
-    if drop2:
-        hot_cues.append(_to_cue("D", float(drop2["start"]), kind="hot"))
+    d_time = float(drop2["start"]) if drop2 else max(0.0, float(duration_sec) - 32.0)
+
+    # C: break in（なければBとDの中点）
+    if break1:
+        c_time = float(break1["start"])
     else:
-        d_time = max(0.0, float(duration_sec) - 32.0)
-        hot_cues.append(_to_cue("D", d_time, kind="hot"))
+        c_time = max(b_time + 8.0, (b_time + d_time) / 2.0)
+        c_time = min(c_time, max(0.0, float(duration_sec) - 8.0))
+
+    hot_cues: list[dict[str, Any]] = [
+        _to_cue("A", a_time, kind="hot"),
+        _to_cue("B", b_time, kind="hot"),
+        _to_cue("C", c_time, kind="hot"),
+        _to_cue("D", d_time, kind="hot"),
+    ]
 
     # Memory cues
     memory_cues: list[dict[str, Any]] = [_to_cue("Intro", float(intro["start"]), kind="memory")]
 
-    # 主要境界を追加（重複回避）
     boundary_candidates: list[tuple[str, float]] = []
     if build1:
         boundary_candidates.append(("Build", float(build1["start"])))
@@ -93,7 +93,7 @@ def generate_dj_cues_from_sections(sections: list[dict[str, Any]], duration_sec:
         memory_cues.append(_to_cue(label, sec, kind="memory"))
 
     notes = [
-        "A=ミックスイン開始候補, B=1st Drop, C=Break, D=2nd Drop/終盤移行",
+        "A=ミックスイン開始候補, B=1st Drop, C=Break/中間遷移, D=2nd Drop/終盤移行",
         "Rekordboxへは time_sec をそのままホットキューに入力",
     ]
 

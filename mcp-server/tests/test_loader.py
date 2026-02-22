@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from vml_audio_lab.tools.loader import DEFAULT_SR, _is_youtube_url, load_track, load_y
+from vml_audio_lab.tools.loader import DEFAULT_SR, _cache_key, _canonical_source, _is_youtube_url, load_track, load_y
 
 FIXTURES = Path(__file__).parent / "fixtures"
 SINE_WAV = FIXTURES / "sine_440hz_3s.wav"
@@ -64,6 +64,23 @@ class TestLoadTrackLocal:
         y2 = np.load(result2["y_path"])
         np.testing.assert_array_equal(y1, y2)
 
+    def test_cache_hit_recovers_missing_meta(self) -> None:
+        import tempfile
+
+        source = str(SINE_WAV)
+        result1 = load_track(source)
+
+        cache_dir = Path(tempfile.gettempdir()) / "vml_audio_lab"
+        key = _cache_key(_canonical_source(source))
+        meta_path = cache_dir / f"{key}_meta.json"
+        if meta_path.exists():
+            meta_path.unlink()
+
+        result2 = load_track(source)
+        assert result2["file_path"]
+        assert Path(result2["file_path"]).exists()
+        assert meta_path.exists()
+
 
 class TestLoadY:
     """load_y セキュリティテスト"""
@@ -99,6 +116,7 @@ class TestIsYoutubeUrl:
             "https://youtu.be/dQw4w9WgXcQ?si=ABC123",
             "https://www.youtube.com/shorts/abc123DEF-_",
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42s",
+            "https://music.youtube.com/watch?v=dQw4w9WgXcQ",
             "http://youtube.com/watch?v=abc123",
         ],
     )
@@ -110,6 +128,7 @@ class TestIsYoutubeUrl:
         [
             "/path/to/local/file.wav",
             "https://example.com/video.mp4",
+            "ftp://youtube.com/watch?v=dQw4w9WgXcQ",
             "not a url at all",
             "",
         ],
@@ -136,13 +155,15 @@ class TestLoadTrackYouTube:
         # 前回テストのキャッシュが残っている可能性があるので削除
         import tempfile
 
-        from vml_audio_lab.tools.loader import _cache_key
-
         url = "https://youtu.be/test123ABC"
         cache_dir = Path(tempfile.gettempdir()) / "vml_audio_lab"
-        cached_npy = cache_dir / f"{_cache_key(url)}_y.npy"
+        cache_key = _cache_key(_canonical_source(url))
+        cached_npy = cache_dir / f"{cache_key}_y.npy"
+        cached_meta = cache_dir / f"{cache_key}_meta.json"
         if cached_npy.exists():
             cached_npy.unlink()
+        if cached_meta.exists():
+            cached_meta.unlink()
 
         with patch("vml_audio_lab.tools.loader._download_youtube") as mock_dl:
             mock_dl.return_value = (str(wav_path), {**fake_info, "youtube_url": url})
