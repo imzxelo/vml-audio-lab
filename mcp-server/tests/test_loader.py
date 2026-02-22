@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from vml_audio_lab.tools.loader import _is_youtube_url, load_track, load_y
+from vml_audio_lab.tools.loader import DEFAULT_SR, _is_youtube_url, load_track, load_y
 
 FIXTURES = Path(__file__).parent / "fixtures"
 SINE_WAV = FIXTURES / "sine_440hz_3s.wav"
@@ -27,7 +27,7 @@ class TestLoadTrackLocal:
 
     def test_sample_rate(self) -> None:
         result = load_track(str(SINE_WAV))
-        assert result["sr"] == 22050
+        assert result["sr"] == DEFAULT_SR
 
     def test_duration_approximately_3s(self) -> None:
         result = load_track(str(SINE_WAV))
@@ -96,7 +96,9 @@ class TestIsYoutubeUrl:
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
             "https://youtube.com/watch?v=dQw4w9WgXcQ",
             "https://youtu.be/dQw4w9WgXcQ",
+            "https://youtu.be/dQw4w9WgXcQ?si=ABC123",
             "https://www.youtube.com/shorts/abc123DEF-_",
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=42s",
             "http://youtube.com/watch?v=abc123",
         ],
     )
