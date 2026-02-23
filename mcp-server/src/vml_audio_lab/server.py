@@ -98,6 +98,7 @@ def analyze_energy(y_path: str) -> bytes:
 def analyze_structure(
     y_path: str,
     n_segments: int | None = None,
+    genre: str | None = None,
     genre_group: str = "default",
 ) -> dict:
     """楽曲のセクション構造を自動検出する。
@@ -107,12 +108,15 @@ def analyze_structure(
     Args:
         y_path: load_audio で返された y_path
         n_segments: セクション数（省略で自動推定）
-        genre_group: ジャンルグループ
+        genre: ジャンルスラグ (例: "hiphop", "jpop", "house")。
+            analyze_genre で得たジャンル名をそのまま渡せる。genre_group より優先。
+        genre_group: ジャンルグループ (genre 未指定時に使用)
             - "default": Intro/Build/Drop/Break/Outro (DJ系)
             - "hiphop": Verse/Hook/Bridge/Outro
             - "jpop": Aメロ/Bメロ/サビ/落ちサビ/大サビ/Outro
+            - "classical": 主題/展開/再現/コーダ
     """
-    return detect_structure(y_path, n_segments=n_segments, genre_group=genre_group)
+    return detect_structure(y_path, n_segments=n_segments, genre=genre, genre_group=genre_group)
 
 
 @mcp.tool

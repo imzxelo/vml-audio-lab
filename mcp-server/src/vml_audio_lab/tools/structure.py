@@ -149,6 +149,7 @@ def _refine_jpop_labels(sections: list[dict]) -> None:
 def detect_structure(
     y_path: str,
     n_segments: int | None = None,
+    genre: str | None = None,
     genre_group: str = "default",
 ) -> dict:
     """楽曲のセクション構造を自動検出する。
@@ -159,9 +160,14 @@ def detect_structure(
     Args:
         y_path: load_track で返された音声データのパス
         n_segments: セクション数（省略で自動推定）
-        genre_group: ジャンルグループ (hiphop, jpop, または default)
+        genre: ジャンルスラグ (例: "hiphop", "jpop", "house")。
+            指定するとジャンル別ラベルが適用される。
+            genre_group より優先される。
+        genre_group: ジャンルグループ (hiphop, jpop, classical, または default)
+            genre が None の場合に使用される。
             - "hiphop": Verse/Hook/Bridge/Outro
             - "jpop": Aメロ/Bメロ/サビ/落ちサビ/大サビ/Outro
+            - "classical": 主題/展開/再現/コーダ
             - "default": Intro/Build/Drop/Break/Outro (DJ系)
 
     Returns:
@@ -177,6 +183,9 @@ def detect_structure(
             - duration_sec: 全体の長さ (秒)
             - genre_group: 使用したジャンルグループ
     """
+    # genre 引数が指定されたら genre_group に変換する
+    if genre is not None:
+        genre_group = _genre_to_label_group(genre)
     y = load_y(y_path)
     duration_sec = float(librosa.get_duration(y=y, sr=DEFAULT_SR))
 
