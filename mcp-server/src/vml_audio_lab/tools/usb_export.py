@@ -223,42 +223,59 @@ def update_rekordbox_xml(
             break
 
     if existing is None:
-        track_id = _next_track_id(collection)
+        track_id_str = str(_next_track_id(collection))
         track = ET.SubElement(
             collection,
             "TRACK",
             {
-                "TrackID": str(track_id),
-                "Name": _sanitize_name(title),
-                "Artist": _sanitize_name(artist),
-                "Genre": _genre_display_name(genre),
-                "TotalTime": str(max(1, int(round(duration_sec)))),
-                "AverageBpm": f"{float(bpm):.2f}",
-                "Tonality": key_label,
+                "TrackID": track_id_str,
                 "DateAdded": date.today().isoformat(),
-                "Location": location,
             },
         )
-        ET.SubElement(
-            track,
-            "TEMPO",
-            {
-                "Inizio": "0.000",
-                "Bpm": f"{float(bpm):.2f}",
-                "Metro": "4/4",
-                "Battito": "1",
-            },
-        )
-        _append_position_marks(track=track, hot_cues=hot_cues, memory_cues=memory_cues)
         xml_added = True
     else:
-        track_id = int(existing.get("TrackID", "0") or 0)
+        track = existing
+        track_id_str = str(track.get("TrackID", "")).strip()
+        if not track_id_str:
+            track_id_str = str(_next_track_id(collection))
+            track.set("TrackID", track_id_str)
+        if not track.get("DateAdded"):
+            track.set("DateAdded", date.today().isoformat())
         xml_added = False
+
+    track.set("Name", _sanitize_name(title))
+    track.set("Artist", _sanitize_name(artist))
+    track.set("Genre", _genre_display_name(genre))
+    track.set("TotalTime", str(max(1, int(round(duration_sec)))))
+    track.set("AverageBpm", f"{float(bpm):.2f}")
+    track.set("Tonality", key_label)
+    track.set("Location", location)
+
+    for child in list(track):
+        if child.tag in {"TEMPO", "POSITION_MARK"}:
+            track.remove(child)
+
+    ET.SubElement(
+        track,
+        "TEMPO",
+        {
+            "Inizio": "0.000",
+            "Bpm": f"{float(bpm):.2f}",
+            "Metro": "4/4",
+            "Battito": "1",
+        },
+    )
+    _append_position_marks(track=track, hot_cues=hot_cues, memory_cues=memory_cues)
+
+    try:
+        track_id = int(track_id_str)
+    except ValueError:
+        track_id = 0
 
     collection.set("Entries", str(len(collection.findall("TRACK"))))
     playlist = _ensure_playlist(root_node, playlist_name=playlist_name)
 
-    key_value = str(track_id)
+    key_value = track_id_str
     existing_keys = {node.get("Key", "") for node in playlist.findall("TRACK")}
     if key_value not in existing_keys:
         ET.SubElement(playlist, "TRACK", {"Key": key_value})

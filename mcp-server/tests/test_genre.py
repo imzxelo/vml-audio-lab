@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from vml_audio_lab.tools.genre import detect_genre
+from vml_audio_lab.tools.genre import canonicalize_genre_slug, detect_genre
 
 
 def test_detect_genre_votes_across_sources(monkeypatch) -> None:
@@ -42,3 +42,13 @@ def test_detect_genre_unknown_when_all_sources_fail(monkeypatch) -> None:
     assert result["genre"] == "unknown"
     assert result["genre_group"] == "unknown"
     assert result["confidence"] == 0.23
+
+
+def test_canonicalize_genre_slug_aliases() -> None:
+    assert canonicalize_genre_slug("tech house") == "tech-house"
+    assert canonicalize_genre_slug("techhouse") == "tech-house"
+    assert canonicalize_genre_slug("Tech-House") == "tech-house"
+    assert canonicalize_genre_slug("drum and bass") == "dnb"
+    assert canonicalize_genre_slug("drum & bass") == "dnb"
+    assert canonicalize_genre_slug("hip hop") == "hiphop"
+    assert canonicalize_genre_slug("hip-hop") == "hiphop"

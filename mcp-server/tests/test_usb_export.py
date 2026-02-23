@@ -138,3 +138,62 @@ def test_update_rekordbox_xml_does_not_duplicate_existing_track(tmp_path: Path) 
     root = ET.parse(xml_path).getroot()
     tracks = root.findall("./COLLECTION/TRACK")
     assert len(tracks) == 1
+
+
+def test_update_rekordbox_xml_updates_existing_track_payload(tmp_path: Path) -> None:
+    audio = tmp_path / "track.wav"
+    audio.write_bytes(b"RIFF....WAVE")
+    xml_path = tmp_path / "rekordbox_library.xml"
+
+    first = update_rekordbox_xml(
+        xml_path=str(xml_path),
+        audio_path=str(audio),
+        title="Track V1",
+        artist="Artist V1",
+        genre="house",
+        bpm=124.0,
+        key_label="Cm",
+        duration_sec=180.0,
+        hot_cues=[{"name": "A", "time_sec": 12.0}],
+        memory_cues=[{"name": "Intro", "time_sec": 0.0}],
+    )
+    second = update_rekordbox_xml(
+        xml_path=str(xml_path),
+        audio_path=str(audio),
+        title="Track V2",
+        artist="Artist V2",
+        genre="tech-house",
+        bpm=128.0,
+        key_label="Fm",
+        duration_sec=210.0,
+        hot_cues=[{"name": "B", "time_sec": 72.0}],
+        memory_cues=[{"name": "Drop1", "time_sec": 72.0}],
+    )
+
+    assert first["track_id"] == second["track_id"]
+    assert second["xml_added"] is False
+
+    root = ET.parse(xml_path).getroot()
+    tracks = root.findall("./COLLECTION/TRACK")
+    assert len(tracks) == 1
+
+    track = tracks[0]
+    assert track.get("Name") == "Track V2"
+    assert track.get("Artist") == "Artist V2"
+    assert track.get("Genre") == "Tech House"
+    assert track.get("AverageBpm") == "128.00"
+    assert track.get("Tonality") == "Fm"
+    assert track.get("TotalTime") == "210"
+
+    tempo_nodes = track.findall("TEMPO")
+    assert len(tempo_nodes) == 1
+    assert tempo_nodes[0].get("Bpm") == "128.00"
+
+    marks = track.findall("POSITION_MARK")
+    assert len(marks) == 2
+    assert {m.get("Name") for m in marks} == {"B", "Drop1"}
+
+    playlist_tracks = root.findall(
+        "./PLAYLISTS/NODE[@Type='0'][@Name='ROOT']/NODE[@Type='1'][@Name='VML Analysis']/TRACK"
+    )
+    assert len(playlist_tracks) == 1

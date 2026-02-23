@@ -29,10 +29,43 @@ _GENRE_GROUP: dict[str, str] = {
     "unknown": "unknown",
 }
 
+_GENRE_ALIASES: dict[str, str] = {
+    "tech house": "tech-house",
+    "techhouse": "tech-house",
+    "drum and bass": "dnb",
+    "drum & bass": "dnb",
+    "drum n bass": "dnb",
+    "drumandbass": "dnb",
+    "d&b": "dnb",
+    "hip hop": "hiphop",
+    "hip-hop": "hiphop",
+}
+
+
+def canonicalize_genre_slug(genre: str) -> str:
+    """ジャンル文字列を canonical slug に正規化する。"""
+    normalized = _normalize_text(genre).replace("_", "-")
+    if not normalized:
+        return "unknown"
+
+    if normalized in _GENRE_GROUP:
+        return normalized
+    if normalized in _GENRE_ALIASES:
+        return _GENRE_ALIASES[normalized]
+
+    spaced = normalized.replace("-", " ")
+    if spaced in _GENRE_ALIASES:
+        return _GENRE_ALIASES[spaced]
+
+    compact = spaced.replace(" ", "")
+    if compact in _GENRE_ALIASES:
+        return _GENRE_ALIASES[compact]
+    return normalized
+
 
 def genre_group_for(genre: str) -> str:
     """ジャンル名から保存用の大分類を返す。"""
-    return _GENRE_GROUP.get(_normalize_text(genre), "unknown")
+    return _GENRE_GROUP.get(canonicalize_genre_slug(genre), "unknown")
 
 
 def _normalize_text(value: str) -> str:
@@ -119,11 +152,13 @@ def _vote_genre(sources: dict[str, str]) -> tuple[str, float]:
 
 def detect_genre(title: str, artist: str, y: np.ndarray, sr: int) -> dict:
     """楽曲ジャンルを複数ソースから推定する。"""
-    yt_guess = _detect_from_text(title=title, artist=artist)
-    web_guess = _detect_from_web(artist=artist, title=title)
+    yt_guess = canonicalize_genre_slug(_detect_from_text(title=title, artist=artist))
+    web_guess = canonicalize_genre_slug(_detect_from_web(artist=artist, title=title))
     audio_guess, audio_conf = _detect_from_audio(y=y, sr=sr)
+    audio_guess = canonicalize_genre_slug(audio_guess)
 
     final_genre, confidence = _vote_genre({"youtube": yt_guess, "web": web_guess, "audio": audio_guess})
+    final_genre = canonicalize_genre_slug(final_genre)
     if final_genre == "unknown":
         confidence = round(max(audio_conf, confidence), 2)
 

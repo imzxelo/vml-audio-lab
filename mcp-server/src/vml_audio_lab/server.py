@@ -7,7 +7,7 @@ from fastmcp import FastMCP
 from vml_audio_lab import __version__
 from vml_audio_lab.tools.analysis import detect_bpm, detect_key, energy_curve
 from vml_audio_lab.tools.cues import recommend_cues
-from vml_audio_lab.tools.genre import detect_genre, genre_group_for
+from vml_audio_lab.tools.genre import canonicalize_genre_slug, detect_genre, genre_group_for
 from vml_audio_lab.tools.loader import load_track, load_y
 from vml_audio_lab.tools.structure import detect_structure
 from vml_audio_lab.tools.usb_export import copy_to_usb, split_artist_title, update_rekordbox_xml
@@ -183,8 +183,9 @@ def prepare_usb_track(
     key_result = detect_key(y_path)
     cues_result = recommend_cues(y_path)
 
-    if genre_override:
-        final_genre = genre_override.strip().lower()
+    override_value = (genre_override or "").strip()
+    if override_value:
+        final_genre = canonicalize_genre_slug(override_value)
         genre_result = {
             "genre": final_genre,
             "confidence": 1.0,
