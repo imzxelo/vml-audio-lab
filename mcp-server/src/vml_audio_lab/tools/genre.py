@@ -287,7 +287,13 @@ def _vote_genre(sources: dict[str, str]) -> tuple[str, float]:
     return (winner[0], round(float(confidence), 2))
 
 
-def detect_genre(title: str, artist: str, y: np.ndarray, sr: int) -> dict:
+def detect_genre(
+    title: str,
+    artist: str,
+    y: np.ndarray,
+    sr: int,
+    bpm: float | None = None,
+) -> dict:
     """楽曲ジャンルを複数ソースから推定する。
 
     10ジャンル対応。Hip-Hop / J-Pop はハーフタイム BPM 補正を行う。
@@ -297,6 +303,7 @@ def detect_genre(title: str, artist: str, y: np.ndarray, sr: int) -> dict:
         artist: アーティスト名
         y: 音声データ
         sr: サンプリングレート
+        bpm: 事前に計算済みの BPM。指定するとオーディオ BPM 計算をスキップする。
 
     Returns:
         dict:
@@ -317,9 +324,12 @@ def detect_genre(title: str, artist: str, y: np.ndarray, sr: int) -> dict:
     if final_genre == "unknown":
         confidence = round(max(audio_conf, confidence), 2)
 
-    # ハーフタイム BPM 補正
-    tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-    raw_bpm = float(np.atleast_1d(tempo)[0])
+    # ハーフタイム BPM 補正 (bpm が渡されていれば再計算しない)
+    if bpm is not None:
+        raw_bpm = float(bpm)
+    else:
+        tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+        raw_bpm = float(np.atleast_1d(tempo)[0])
     corrected_bpm = _apply_halftime_correction(raw_bpm, final_genre)
     halftime_corrected = corrected_bpm != raw_bpm
 

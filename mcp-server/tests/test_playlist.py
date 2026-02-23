@@ -6,8 +6,10 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from vml_audio_lab.tools.playlist import (
+    _qualifies_for_vocal_for_house,
     add_to_camelot_playlist,
     add_to_mood_playlist,
+    add_to_sampling_playlist,
     generate_playlists,
     get_compatible_playlists,
 )
@@ -274,3 +276,239 @@ class TestGetCompatiblePlaylists:
         result = get_compatible_playlists("/nonexistent/path.xml", "C")
         assert len(result) == 4
         assert "Camelot 8B Zone" in result
+
+
+# ---------------------------------------------------------------------------
+# ヘルパー
+# ---------------------------------------------------------------------------
+
+def _make_hiphop_vocal_analysis(vocal_clarity: float = 0.8) -> dict:
+    """テスト用の Hip-Hop ボーカル分析結果を返す。"""
+    return {
+        "usable_sections": [
+            {"type": "Hook", "vocal_clarity": vocal_clarity, "has_clear_vocal": True},
+        ],
+        "compatible_genres": ["house", "deep-house"],
+    }
+
+
+def _make_track_info(genre: str = "hiphop", track_id: str = "1") -> dict:
+    return {"track_id": track_id, "genre": genre}
+
+
+# ---------------------------------------------------------------------------
+# _qualifies_for_vocal_for_house テスト
+# ---------------------------------------------------------------------------
+
+class TestQualifiesForVocalForHouse:
+    """_qualifies_for_vocal_for_house の判定ロジックを検証する。"""
+
+    def test_hiphop_with_clear_vocal_and_house_genre_qualifies(self) -> None:
+        track = _make_track_info(genre="hiphop")
+        analysis = _make_hiphop_vocal_analysis(vocal_clarity=0.8)
+        assert _qualifies_for_vocal_for_house(track, analysis) is True
+
+    def test_jpop_with_clear_vocal_and_house_genre_qualifies(self) -> None:
+        track = _make_track_info(genre="jpop")
+        analysis = _make_hiphop_vocal_analysis(vocal_clarity=0.9)
+        assert _qualifies_for_vocal_for_house(track, analysis) is True
+
+    def test_house_genre_does_not_qualify(self) -> None:
+        """ソースジャンルが house の場合は対象外。"""
+        track = _make_track_info(genre="house")
+        analysis = _make_hiphop_vocal_analysis()
+        assert _qualifies_for_vocal_for_house(track, analysis) is False
+
+    def test_low_vocal_clarity_does_not_qualify(self) -> None:
+        """vocal_clarity <= 0.7 は対象外。"""
+        track = _make_track_info(genre="hiphop")
+        analysis = _make_hiphop_vocal_analysis(vocal_clarity=0.5)
+        assert _qualifies_for_vocal_for_house(track, analysis) is False
+
+    def test_vocal_clarity_exactly_07_does_not_qualify(self) -> None:
+        """境界値 0.7 は含まない (> 0.7 が条件)。"""
+        track = _make_track_info(genre="hiphop")
+        analysis = _make_hiphop_vocal_analysis(vocal_clarity=0.7)
+        assert _qualifies_for_vocal_for_house(track, analysis) is False
+
+    def test_no_house_in_compatible_genres_does_not_qualify(self) -> None:
+        """compatible_genres に house / deep-house がない場合は対象外。"""
+        track = _make_track_info(genre="hiphop")
+        analysis = {
+            "usable_sections": [{"vocal_clarity": 0.9, "has_clear_vocal": True}],
+            "compatible_genres": ["techno", "melodic"],
+        }
+        assert _qualifies_for_vocal_for_house(track, analysis) is False
+
+    def test_deep_house_in_compatible_genres_qualifies(self) -> None:
+        """deep-house だけでも house 条件を満たす。"""
+        track = _make_track_info(genre="hiphop")
+        analysis = {
+            "usable_sections": [{"vocal_clarity": 0.85, "has_clear_vocal": True}],
+            "compatible_genres": ["deep-house"],
+        }
+        assert _qualifies_for_vocal_for_house(track, analysis) is True
+
+    def test_empty_usable_sections_does_not_qualify(self) -> None:
+        track = _make_track_info(genre="hiphop")
+        analysis = {"usable_sections": [], "compatible_genres": ["house"]}
+        assert _qualifies_for_vocal_for_house(track, analysis) is False
+
+
+# ---------------------------------------------------------------------------
+# add_to_sampling_playlist テスト
+# ---------------------------------------------------------------------------
+
+class TestAddToSamplingPlaylist:
+    """add_to_sampling_playlist の統合テスト。"""
+
+    def test_skips_if_xml_not_found(self, tmp_path: Path) -> None:
+        xml_path = str(tmp_path / "nonexistent.xml")
+        result = add_to_sampling_playlist(
+            xml_path,
+            _make_track_info(),
+            _make_hiphop_vocal_analysis(),
+            [],
+        )
+        assert result["skipped"] is True
+        assert result["reason"] == "xml_not_found"
+
+    def test_return_fields_present(self, tmp_path: Path) -> None:
+        xml_path = tmp_path / "rb.xml"
+        _make_minimal_xml(xml_path)
+        result = add_to_sampling_playlist(
+            str(xml_path), _make_track_info(), _make_hiphop_vocal_analysis(), []
+        )
+        for field in ("added_to_vocal_for_house", "added_to_transition_pairs", "xml_path", "skipped"):
+            assert field in result
+
+    def test_hiphop_with_clear_vocal_added_to_vocal_for_house(self, tmp_path: Path) -> None:
+        xml_path = tmp_path / "rb.xml"
+        _make_minimal_xml(xml_path)
+        result = add_to_sampling_playlist(
+            str(xml_path),
+            _make_track_info(genre="hiphop", track_id="10"),
+            _make_hiphop_vocal_analysis(vocal_clarity=0.85),
+            [],
+        )
+        assert result["added_to_vocal_for_house"] is True
+
+        root = ET.parse(str(xml_path)).getroot()
+        playlist = root.find(
+            "./PLAYLISTS/NODE[@Name='ROOT']"
+            "/NODE[@Name='Sampling Ideas']"
+            "/NODE[@Name='Vocal for House']"
+        )
+        assert playlist is not None
+        assert playlist.find("TRACK[@Key='10']") is not None
+
+    def test_non_hiphop_not_added_to_vocal_for_house(self, tmp_path: Path) -> None:
+        xml_path = tmp_path / "rb.xml"
+        _make_minimal_xml(xml_path)
+        result = add_to_sampling_playlist(
+            str(xml_path),
+            _make_track_info(genre="techno", track_id="5"),
+            _make_hiphop_vocal_analysis(vocal_clarity=0.9),
+            [],
+        )
+        assert result["added_to_vocal_for_house"] is False
+
+    def test_compatible_tracks_added_to_transition_pairs(self, tmp_path: Path) -> None:
+        xml_path = tmp_path / "rb.xml"
+        _make_minimal_xml(xml_path)
+        compatible = [
+            {"track_id": "20", "title": "Track A"},
+            {"track_id": "21", "title": "Track B"},
+        ]
+        result = add_to_sampling_playlist(
+            str(xml_path),
+            _make_track_info(genre="house"),
+            _make_hiphop_vocal_analysis(),
+            compatible,
+        )
+        assert result["added_to_transition_pairs"] == 2
+
+        root = ET.parse(str(xml_path)).getroot()
+        playlist = root.find(
+            "./PLAYLISTS/NODE[@Name='ROOT']"
+            "/NODE[@Name='Sampling Ideas']"
+            "/NODE[@Name='Transition Pairs']"
+        )
+        assert playlist is not None
+        assert len(playlist.findall("TRACK")) == 2
+
+    def test_no_duplicate_in_vocal_for_house(self, tmp_path: Path) -> None:
+        """同一トラックを2回追加しても重複しない。"""
+        xml_path = tmp_path / "rb.xml"
+        _make_minimal_xml(xml_path)
+        for _ in range(2):
+            add_to_sampling_playlist(
+                str(xml_path),
+                _make_track_info(genre="hiphop", track_id="99"),
+                _make_hiphop_vocal_analysis(),
+                [],
+            )
+        root = ET.parse(str(xml_path)).getroot()
+        playlist = root.find(
+            "./PLAYLISTS/NODE[@Name='ROOT']"
+            "/NODE[@Name='Sampling Ideas']"
+            "/NODE[@Name='Vocal for House']"
+        )
+        assert len(playlist.findall("TRACK")) == 1
+
+    def test_xml_valid_after_update(self, tmp_path: Path) -> None:
+        xml_path = tmp_path / "rb.xml"
+        _make_minimal_xml(xml_path)
+        add_to_sampling_playlist(
+            str(xml_path), _make_track_info(), _make_hiphop_vocal_analysis(), []
+        )
+        root = ET.parse(str(xml_path)).getroot()
+        assert root.tag == "DJ_PLAYLISTS"
+
+
+# ---------------------------------------------------------------------------
+# generate_playlists + Sampling Ideas 統合テスト
+# ---------------------------------------------------------------------------
+
+class TestGeneratePlaylistsWithSampling:
+    """generate_playlists が vocal_analysis を受け取ると Sampling Ideas を更新する。"""
+
+    def test_sampling_added_field_false_when_no_vocal_analysis(self, tmp_path: Path) -> None:
+        xml_path = tmp_path / "rb.xml"
+        _make_minimal_xml(xml_path)
+        result = generate_playlists(str(xml_path), "1", "Fm", "Peak Time")
+        assert result["sampling_added"] is False
+
+    def test_sampling_added_true_when_qualifies(self, tmp_path: Path) -> None:
+        xml_path = tmp_path / "rb.xml"
+        _make_minimal_xml(xml_path)
+        result = generate_playlists(
+            str(xml_path), "1", "Fm", "Peak Time",
+            track_info=_make_track_info(genre="hiphop", track_id="1"),
+            vocal_analysis=_make_hiphop_vocal_analysis(vocal_clarity=0.9),
+        )
+        assert result["sampling_added"] is True
+
+    def test_sampling_not_added_when_genre_does_not_qualify(self, tmp_path: Path) -> None:
+        xml_path = tmp_path / "rb.xml"
+        _make_minimal_xml(xml_path)
+        result = generate_playlists(
+            str(xml_path), "1", "Fm", "Peak Time",
+            track_info=_make_track_info(genre="house"),
+            vocal_analysis=_make_hiphop_vocal_analysis(),
+        )
+        assert result["sampling_added"] is False
+
+    def test_sampling_folder_created_in_xml(self, tmp_path: Path) -> None:
+        xml_path = tmp_path / "rb.xml"
+        _make_minimal_xml(xml_path)
+        generate_playlists(
+            str(xml_path), "5", "Am", "Deep Night",
+            track_info=_make_track_info(genre="hiphop", track_id="5"),
+            vocal_analysis=_make_hiphop_vocal_analysis(),
+        )
+        root = ET.parse(str(xml_path)).getroot()
+        folder = root.find(
+            "./PLAYLISTS/NODE[@Name='ROOT']/NODE[@Name='Sampling Ideas']"
+        )
+        assert folder is not None
