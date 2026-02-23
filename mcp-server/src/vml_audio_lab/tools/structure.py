@@ -7,6 +7,77 @@ import numpy as np
 
 from vml_audio_lab.tools.loader import DEFAULT_SR, load_y
 
+# ジャンルグループ別のラベルセット
+# 各エントリ: (intro, high_energy, low_energy, mid_energy, outro)
+_GENRE_LABEL_MAP: dict[str, dict[str, str]] = {
+    "hiphop": {
+        "intro": "Intro",
+        "high_energy": "Hook",
+        "low_energy": "Bridge",
+        "mid_energy": "Verse",
+        "outro": "Outro",
+    },
+    "jpop": {
+        "intro": "Intro",
+        "high_energy": "サビ",
+        "low_energy": "落ちサビ",
+        "mid_energy": "Aメロ",
+        "outro": "Outro",
+    },
+    "classical": {
+        "intro": "主題",
+        "high_energy": "再現",
+        "low_energy": "コーダ",
+        "mid_energy": "展開",
+        "outro": "コーダ",
+    },
+    # DJ系 (house, techno, melodic 等) は EDM ラベル
+    "default": {
+        "intro": "Intro",
+        "high_energy": "Drop",
+        "low_energy": "Break",
+        "mid_energy": "Build",
+        "outro": "Outro",
+    },
+}
+
+# ジャンルスラグ → ラベルグループのマッピング
+# genre.py の _GENRE_GROUP と対応する。ここでは structure.py 独立で持つ。
+_GENRE_SLUG_TO_LABEL_GROUP: dict[str, str] = {
+    "hiphop": "hiphop",
+    "jpop": "jpop",
+    "classical": "classical",
+    # DJ系はすべて default
+    "house": "default",
+    "deep-house": "default",
+    "tech-house": "default",
+    "techno": "default",
+    "deep-techno": "default",
+    "uk-garage": "default",
+    "melodic": "default",
+    "dnb": "default",
+    "trance": "default",
+    "electronic": "default",
+}
+
+
+def _genre_to_label_group(genre: str) -> str:
+    """ジャンルスラグまたはグループ名をラベルグループに変換する。
+
+    Args:
+        genre: ジャンルスラグ (例: "hiphop", "house") またはグループ名
+
+    Returns:
+        ラベルグループ名 ("hiphop", "jpop", "classical", "default")
+    """
+    normalized = genre.strip().lower()
+    return _GENRE_SLUG_TO_LABEL_GROUP.get(normalized, "default")
+
+
+def _genre_labels(genre_group: str) -> dict[str, str]:
+    """ジャンルグループに対応するラベルセットを返す。"""
+    return _GENRE_LABEL_MAP.get(genre_group, _GENRE_LABEL_MAP["default"])
+
 
 def _estimate_n_segments(duration_sec: float) -> int:
     """楽曲の長さからセグメント数を推定する。
@@ -24,18 +95,74 @@ def _format_time(seconds: float) -> str:
     return f"{m}:{s:02d}"
 
 
+def _assign_labels(sections: list[dict], genre_group: str = "default") -> None:
+    """エネルギーに基づいてセクションにラベルを付与する。
+
+    J-Pop / Hip-Hop はジャンル固有のラベルを使用する。
+
+    Args:
+        sections: セクションのリスト (energy フィールドが必須)
+        genre_group: ジャンルグループ名
+    """
+    labels = _genre_labels(genre_group)
+    n = len(sections)
+
+    for i, s in enumerate(sections):
+        if i == 0:
+            s["label"] = labels["intro"]
+        elif i == n - 1:
+            s["label"] = labels["outro"]
+        elif s["energy"] >= 0.8:
+            s["label"] = labels["high_energy"]
+        elif s["energy"] < 0.3:
+            s["label"] = labels["low_energy"]
+        else:
+            s["label"] = labels["mid_energy"]
+
+    # J-Pop 特有: 高エネルギーが複数ある場合、後半を大サビ/落ちサビに変換
+    if genre_group == "jpop":
+        _refine_jpop_labels(sections)
+
+
+def _refine_jpop_labels(sections: list[dict]) -> None:
+    """J-Pop のサビ構造をより詳細に分類する。
+
+    最初のサビ → サビ
+    2回目のサビ → 大サビ（最後の高エネルギーセクション）
+    """
+    sabi_indices = [i for i, s in enumerate(sections) if s["label"] == "サビ"]
+    if len(sabi_indices) >= 2:
+        # 最後の「サビ」を「大サビ」に変更
+        sections[sabi_indices[-1]]["label"] = "大サビ"
+
+    # Bメロ: Aメロとサビの間のセクション
+    for i, s in enumerate(sections):
+        if s["label"] == "Aメロ":
+            # 前のセクションが「Aメロ」で次がサビなら Bメロ
+            if i > 0 and i + 1 < len(sections):
+                prev_label = sections[i - 1]["label"]
+                next_label = sections[i + 1]["label"]
+                if prev_label == "Aメロ" and next_label in ("サビ", "大サビ"):
+                    s["label"] = "Bメロ"
+
+
 def detect_structure(
     y_path: str,
     n_segments: int | None = None,
+    genre_group: str = "default",
 ) -> dict:
     """楽曲のセクション構造を自動検出する。
 
     MFCC 特徴量 + 凝集型クラスタリングでセクション境界を推定し、
-    各セクションにラベル（エネルギーベース）を付与する。
+    ジャンルに応じたラベルを付与する。
 
     Args:
         y_path: load_track で返された音声データのパス
         n_segments: セクション数（省略で自動推定）
+        genre_group: ジャンルグループ (hiphop, jpop, または default)
+            - "hiphop": Verse/Hook/Bridge/Outro
+            - "jpop": Aメロ/Bメロ/サビ/落ちサビ/大サビ/Outro
+            - "default": Intro/Build/Drop/Break/Outro (DJ系)
 
     Returns:
         dict:
@@ -48,6 +175,7 @@ def detect_structure(
                 - energy: 相対エネルギー (0.0〜1.0)
             - n_segments: セクション数
             - duration_sec: 全体の長さ (秒)
+            - genre_group: 使用したジャンルグループ
     """
     y = load_y(y_path)
     duration_sec = float(librosa.get_duration(y=y, sr=DEFAULT_SR))
@@ -66,6 +194,7 @@ def detect_structure(
             "sections": [section],
             "n_segments": 1,
             "duration_sec": round(duration_sec, 2),
+            "genre_group": genre_group,
         }
 
     if n_segments is None:
@@ -92,6 +221,7 @@ def detect_structure(
             "sections": [section],
             "n_segments": 1,
             "duration_sec": round(duration_sec, 2),
+            "genre_group": genre_group,
         }
 
     # 凝集型クラスタリングでセグメント境界を検出
@@ -130,33 +260,12 @@ def detect_structure(
         for s in sections:
             s["energy"] = round(s["energy"] / max_energy, 3)
 
-    # エネルギーベースのラベル付与
-    _assign_labels(sections)
+    # ジャンル別ラベル付与
+    _assign_labels(sections, genre_group=genre_group)
 
     return {
         "sections": sections,
         "n_segments": len(sections),
         "duration_sec": round(duration_sec, 2),
+        "genre_group": genre_group,
     }
-
-
-def _assign_labels(sections: list[dict]) -> None:
-    """エネルギーに基づいてセクションにラベルを付与する。
-
-    - 最初のセクション → Intro
-    - 最後のセクション → Outro
-    - エネルギー 0.8以上 → Drop / High Energy
-    - エネルギー 0.3未満 → Break
-    - それ以外 → Build
-    """
-    for i, s in enumerate(sections):
-        if i == 0:
-            s["label"] = "Intro"
-        elif i == len(sections) - 1:
-            s["label"] = "Outro"
-        elif s["energy"] >= 0.8:
-            s["label"] = "Drop"
-        elif s["energy"] < 0.3:
-            s["label"] = "Break"
-        else:
-            s["label"] = "Build"
