@@ -13,10 +13,12 @@ from vml_audio_lab.tools.camelot import (
 )
 from vml_audio_lab.tools.cues import recommend_cues
 from vml_audio_lab.tools.genre import canonicalize_genre_slug, detect_genre, genre_group_for
-from vml_audio_lab.tools.loader import load_track, load_y
+from vml_audio_lab.tools.library import find_compatible_tracks_by_params, scan_library
+from vml_audio_lab.tools.loader import DEFAULT_SR, load_track, load_y
 from vml_audio_lab.tools.mood import detect_mood
 from vml_audio_lab.tools.playlist import generate_playlists, get_compatible_playlists
 from vml_audio_lab.tools.structure import detect_structure
+from vml_audio_lab.tools.transition import suggest_transition
 from vml_audio_lab.tools.usb_export import copy_to_usb, split_artist_title, update_rekordbox_xml
 from vml_audio_lab.tools.visualize import spectrogram, waveform_overview
 
@@ -140,8 +142,6 @@ def analyze_genre(
         artist: アーティスト名（省略可）
     """
 
-    from vml_audio_lab.tools.loader import DEFAULT_SR
-
     y = load_y(y_path)
     return detect_genre(title=title, artist=artist, y=y, sr=DEFAULT_SR)
 
@@ -168,8 +168,6 @@ def analyze_mood(
         bpm: BPM（省略時は自動推定）
         scale: キースケール "major" または "minor"（省略時は自動推定）
     """
-
-    from vml_audio_lab.tools.loader import DEFAULT_SR
 
     y = load_y(y_path)
 
@@ -296,8 +294,6 @@ def prepare_usb_track(
         usb_path: USB ドライブのマウントパス
     """
 
-    from vml_audio_lab.tools.loader import DEFAULT_SR
-
     usb_root = Path(usb_path).expanduser()
     if not usb_root.exists():
         raise FileNotFoundError(f"{usb_path} が見つかりません")
@@ -326,7 +322,7 @@ def prepare_usb_track(
             "halftime_corrected": False,
         }
     else:
-        genre_result = detect_genre(title=title, artist=artist, y=y, sr=sr)
+        genre_result = detect_genre(title=title, artist=artist, y=y, sr=sr, bpm=bpm_result["bpm"])
 
     # ハーフタイム補正 BPM を使用
     bpm = genre_result.get("corrected_bpm", bpm_result["bpm"])
@@ -412,6 +408,365 @@ def prepare_usb_track(
         },
         "rekordbox_import_guide": _build_rekordbox_import_guide(xml_result["xml_path"]),
     }
+
+
+@mcp.tool
+def index_library(
+    source: str,
+    cache_path: str | None = None,
+) -> dict:
+    """USB またはRekordbox XMLからライブラリインデックスを構築する。
+
+    source が .xml ファイルの場合は Rekordbox XML をパースする。
+    source がディレクトリの場合はフォルダを走査して軽量分析する。
+    フィンガープリントが変わらない場合はキャッシュを返す。
+
+    Args:
+        source: USB パス (例: "/Volumes/NONAME") または Rekordbox XML パス
+        cache_path: キャッシュ保存先（省略時: /tmp/vml_audio_lab/library_index.json）
+
+    Returns:
+        dict:
+            - tracks: トラック辞書のリスト (bpm, key_label, camelot_code, genre, mood など)
+            - total: トラック数
+            - source: スキャン元パス
+            - cached: キャッシュから読み込んだか
+    """
+    return scan_library(source=source, cache_path=cache_path)
+
+
+@mcp.tool
+def match_compatible_tracks(
+    key_label: str,
+    bpm: float,
+    mood: str | None = None,
+    genre: str | None = None,
+    library_source: str | None = None,
+    cache_path: str | None = None,
+    max_results: int = 10,
+) -> dict:
+    """ライブラリからキー・BPM・ムード相性でトラックをマッチングする。
+
+    事前に index_library を実行してキャッシュを作っておくと速い。
+
+    Args:
+        key_label: クエリトラックのキーラベル (例: "Fm", "Am")
+        bpm: クエリトラックの BPM
+        mood: クエリトラックのムード名（省略可）
+        genre: クエリトラックのジャンル（省略可、参考情報）
+        library_source: ライブラリのソースパス（キャッシュがない場合にスキャン）
+        cache_path: キャッシュファイルパス（省略時はデフォルト位置）
+        max_results: 返す最大件数（デフォルト: 10）
+
+    Returns:
+        dict:
+            - matches: マッチ結果リスト (rank, track, bpm, key, camelot, genre, mood,
+                        compatibility ◎/○/△, score, suggestion)
+            - query: クエリ情報
+            - total_scanned: スキャンしたトラック数
+            - compatible_count: 相性スコア > 0 のトラック数
+    """
+    from vml_audio_lab.tools.library import load_index
+
+    library_index = load_index(cache_path)
+
+    return find_compatible_tracks_by_params(
+        query_key_label=key_label,
+        query_bpm=bpm,
+        query_mood=mood,
+        query_genre=genre,
+        library_index=library_index,
+        library_source=library_source if library_index is None else None,
+        max_results=max_results,
+    )
+
+
+@mcp.tool
+def suggest_track_transition(
+    track_a: dict,
+    track_b: dict,
+) -> dict:
+    """2トラック間のベストなトランジション（繋ぎ方）を提案する。
+
+    キー関係・BPM・エネルギー・構造セクションから最適な出点・入点と
+    ミキシングテクニックを提案する。
+
+    Args:
+        track_a: トラック A の分析結果。以下のキーを含む辞書:
+            - key_label (str): キーラベル (例: "Fm")
+            - camelot (str, optional): Camelot コード (例: "4A")
+            - bpm (float): BPM
+            - genre_group (str, optional): ジャンルグループ
+            - sections (list[dict], optional): analyze_structure の sections
+            - energy_level (float, optional): エネルギーレベル 0〜1
+        track_b: トラック B の分析結果（同上）
+
+    Returns:
+        dict:
+            - compatibility: 相性ラベル (◎/○/△)
+            - key_relationship: キー関係の説明
+            - bpm_diff: BPM 差
+            - suggested_transition: 出点・入点・テクニック・energy_match
+            - explanation: 日本語の提案説明文
+    """
+    return suggest_transition(track_a=track_a, track_b=track_b)
+
+
+@mcp.tool
+def extract_vocals(file_path: str) -> dict:
+    """demucsでボーカルを分離する。4ステム(vocals/drums/bass/other)を出力。
+
+    `separate_stems` の薄いラッパー。stems を展開したフラットな dict を返す。
+    analyze_vocal_stem にそのまま渡せるボーカルパスが含まれる。
+
+    Args:
+        file_path: 音声ファイルのローカルパス (wav/mp3/flac 等)
+
+    Returns:
+        dict:
+            - vocals: ボーカルステムのWAVパス
+            - drums: ドラムステムのWAVパス
+            - bass: ベースステムのWAVパス
+            - other: その他ステムのWAVパス
+            - model: 使用したモデル名
+            - cached: キャッシュから返した場合 True
+    """
+    from vml_audio_lab.tools.separator import extract_vocals as _extract_vocals
+
+    return _extract_vocals(file_path)
+
+
+@mcp.tool
+def separate_stems(
+    file_path: str,
+    model_name: str = "htdemucs",
+) -> dict:
+    """音声を4ステム（vocals/drums/bass/other）に分離する。
+
+    demucs htdemucs モデルを使用。初回は数分かかる場合がある。
+    ステムはキャッシュに保存され、2回目以降は即時返却。
+
+    Args:
+        file_path: 音声ファイルのローカルパス (wav/mp3/flac 等)
+        model_name: demucs モデル名（デフォルト: "htdemucs"）
+
+    Returns:
+        dict:
+            - stems: 各ステムの WAVパス辞書 (vocals, drums, bass, other)
+            - model: 使用したモデル名
+            - sample_rate: 出力サンプリングレート
+            - duration_sec: 楽曲長（秒）
+            - processing_time_sec: 処理時間（秒）
+            - source_file: 元ファイルのパス
+            - cached: キャッシュから返した場合 True
+    """
+    from vml_audio_lab.tools.separator import separate_stems as _separate_stems
+
+    return _separate_stems(file_path, model_name=model_name)
+
+
+@mcp.tool
+def analyze_vocal(
+    vocals_path: str,
+    sections: list[dict] | None = None,
+) -> dict:
+    """ボーカルステムのキー・音域・使えるセクションを判定する。
+
+    separate_stems で得たボーカルステムのパスを渡す。
+
+    Args:
+        vocals_path: separate_stems で返されたボーカルステムのWAVパス
+        sections: analyze_structure で返されたセクションリスト（省略可）。
+            渡すと各セクションのボーカル有無を判定する。
+
+    Returns:
+        dict:
+            - key: ボーカルのキーラベル (例: "Fm")
+            - key_label: key の別名
+            - camelot_code: Camelot コード (例: "4A")
+            - camelot: camelot_code の別名
+            - scale: "major" または "minor"
+            - key_strength: キー確信度 (0.0〜1.0)
+            - pitch_range: 音域情報 (low, high, low_hz, high_hz)
+            - usable_sections: 使えるセクションリスト (vocal_clarity, suggestion 付き)
+            - compatible_bpm_range: 合う BPM 帯 [min, max]
+            - compatible_genres: 合うジャンルリスト
+            - compatible_camelot_codes: 相性の良い Camelot コードリスト
+            - sampling_score: 総合サンプリングスコア (0.0〜1.0)
+    """
+    from vml_audio_lab.tools.vocal_analysis import analyze_vocal as _analyze_vocal
+
+    return _analyze_vocal(vocals_path, sections=sections)
+
+
+@mcp.tool
+def analyze_vocal_stem(
+    vocals_path: str,
+    sections: list[dict] | None = None,
+) -> dict:
+    """抽出済みボーカルのキー・音域・使えるセクションを分析する。
+
+    `extract_vocals` や `separate_stems` で得たボーカルステムのパスを渡す。
+    `analyze_vocal` と同じ実装。別名として提供。
+
+    Args:
+        vocals_path: ボーカルステムのWAVパス (extract_vocals の vocals キー)
+        sections: analyze_structure で返されたセクションリスト（省略可）
+
+    Returns:
+        dict:
+            - key: ボーカルのキーラベル (例: "Fm")
+            - key_label: key の別名
+            - camelot_code: Camelot コード (例: "4A")
+            - camelot: camelot_code の別名
+            - scale: "major" または "minor"
+            - key_strength: キー確信度 (0.0〜1.0)
+            - pitch_range: 音域情報 (low, high Hz / low_note, high_note)
+            - usable_sections: 使えるセクションリスト (vocal_clarity, suggestion 付き)
+            - compatible_bpm_range: 合う BPM 帯 [min, max]
+            - compatible_genres: 合うジャンルリスト
+            - compatible_camelot_codes: 相性の良い Camelot コードリスト
+            - sampling_score: 総合サンプリングスコア (0.0〜1.0)
+    """
+    from vml_audio_lab.tools.vocal_analysis import analyze_vocal as _analyze_vocal
+
+    return _analyze_vocal(vocals_path, sections=sections)
+
+
+@mcp.tool
+def find_sampling_candidates(
+    file_path: str,
+    library_source: str | None = None,
+) -> dict:
+    """ボーカルを分析し、ライブラリから相性の良いトラックを提案する。
+
+    一気通貫ワークフロー: ボーカル分離 → キー/音域分析 → ライブラリマッチング。
+    「このボーカル、どのトラックに合う？」をワンショットで答える。
+
+    ライブラリが未インデックスの場合は library_source でスキャン元を指定する。
+    事前に index_library を実行しておくと高速。
+
+    Args:
+        file_path: 分析対象のボーカルステム WAVパス
+            (extract_vocals や separate_stems で得た vocals パス)
+        library_source: ライブラリのスキャン元パス（USB または Rekordbox XML）。
+            キャッシュがある場合は省略可。
+
+    Returns:
+        dict:
+            - vocal_analysis: ボーカル分析結果 (key, pitch_range, usable_sections 等)
+            - matches: 相性トラックのリスト (rank, track_id, compatibility, suggestion)
+            - total_searched: ライブラリ検索対象トラック数
+            - vocal_key: ボーカルのキーラベル
+            - vocal_camelot: ボーカルの Camelot コード
+            - sampling_score: ボーカルの総合サンプリング適性スコア (0.0〜1.0)
+    """
+    from vml_audio_lab.tools.library import load_index
+    from vml_audio_lab.tools.library import scan_library as _scan_library
+    from vml_audio_lab.tools.vocal_analysis import analyze_vocal as _analyze_vocal
+    from vml_audio_lab.tools.vocal_analysis import find_compatible_tracks_for_vocal
+
+    # ボーカル分析
+    vocal_result = _analyze_vocal(file_path)
+
+    # ライブラリインデックスを取得（キャッシュ優先、なければスキャン）
+    library_index = load_index(None)
+    if library_index is None and library_source:
+        scan_result = _scan_library(source=library_source)
+        library_index = {t["file_path"]: t for t in scan_result.get("tracks", [])}
+
+    # インデックスがなければ空で返す
+    if library_index is None:
+        return {
+            "vocal_analysis": vocal_result,
+            "matches": [],
+            "total_searched": 0,
+            "vocal_key": vocal_result.get("key"),
+            "vocal_camelot": vocal_result.get("camelot_code"),
+            "sampling_score": vocal_result.get("sampling_score", 0.0),
+            "note": (
+                "ライブラリインデックスが見つかりません。"
+                "library_source を指定するか、事前に index_library を実行してください。"
+            ),
+        }
+
+    # インデックスを一時ファイルに保存して find_compatible_tracks_for_vocal に渡す
+    import json
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=".json",
+        delete=False,
+        encoding="utf-8",
+    ) as tmp:
+        # library_index が dict の場合はリストに変換
+        if isinstance(library_index, dict):
+            tracks_list = list(library_index.values())
+        else:
+            tracks_list = library_index
+        json.dump({"tracks": tracks_list}, tmp, ensure_ascii=False)
+        tmp_path = tmp.name
+
+    match_result = find_compatible_tracks_for_vocal(vocal_result, tmp_path)
+
+    return {
+        "vocal_analysis": vocal_result,
+        "matches": match_result.get("matches", []),
+        "total_searched": match_result.get("total_searched", 0),
+        "vocal_key": vocal_result.get("key"),
+        "vocal_camelot": vocal_result.get("camelot_code"),
+        "sampling_score": vocal_result.get("sampling_score", 0.0),
+    }
+
+
+@mcp.tool
+def find_tracks_for_vocal(
+    vocal_analysis: dict,
+    library_index_path: str,
+) -> dict:
+    """ボーカル分析結果からライブラリ内の相性トラックを検索する。
+
+    Camelot キー相性 + BPM 範囲でフィルタし、マッチ度でソートして返す。
+
+    Args:
+        vocal_analysis: analyze_vocal で返された分析結果 dict
+        library_index_path: scan_library で生成した JSON インデックスのパス
+
+    Returns:
+        dict:
+            - matches: マッチしたトラックリスト (rank, track, compatibility, suggestion)
+            - total_searched: 検索対象トラック数
+            - vocal_key: ボーカルのキー
+            - vocal_camelot: ボーカルの Camelot コード
+    """
+    from vml_audio_lab.tools.vocal_analysis import find_compatible_tracks_for_vocal
+
+    return find_compatible_tracks_for_vocal(vocal_analysis, library_index_path)
+
+
+@mcp.tool
+def add_to_vocal_for_house_playlist(
+    xml_path: str,
+    track_id: str,
+) -> dict:
+    """「Vocal for House」プレイリストにトラックを追加する。
+
+    HipHop/JPop のボーカルが House に合う曲を Rekordbox XML に登録する。
+
+    Args:
+        xml_path: Rekordbox XML のパス
+        track_id: トラックID (文字列)
+
+    Returns:
+        dict:
+            - playlist: 追加されたプレイリスト名
+            - xml_path: 更新した XML パス
+            - skipped: スキップした場合 True
+    """
+    from vml_audio_lab.tools.playlist import add_vocal_for_house
+
+    return add_vocal_for_house(xml_path, track_id)
 
 
 def main() -> None:

@@ -61,7 +61,7 @@ def test_prepare_usb_track_orchestrates_pipeline(monkeypatch, tmp_path: Path) ->
 
     monkeypatch.setattr(
         "vml_audio_lab.server.detect_genre",
-        lambda title, artist, y, sr: {
+        lambda title, artist, y, sr, bpm=None: {
             "genre": "tech-house",
             "confidence": 0.85,
             "sources": {"youtube": "tech-house", "web": "tech-house", "audio": "house"},
@@ -110,7 +110,7 @@ def test_prepare_usb_track_blank_override_falls_back_to_detect(monkeypatch, tmp_
 
     called = {"detect_genre": False}
 
-    def _detect_genre(title, artist, y, sr):
+    def _detect_genre(title, artist, y, sr, bpm=None):
         called["detect_genre"] = True
         return {
             "genre": "techno",
