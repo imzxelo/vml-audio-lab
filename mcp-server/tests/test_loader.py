@@ -68,7 +68,7 @@ class TestLoadTrackLocal:
         import tempfile
 
         source = str(SINE_WAV)
-        result1 = load_track(source)
+        load_track(source)
 
         cache_dir = Path(tempfile.gettempdir()) / "vml_audio_lab"
         key = _cache_key(_canonical_source(source))
