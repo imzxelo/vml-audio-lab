@@ -218,18 +218,29 @@ class TestBuildSetlist:
         )
         assert high_to_high > high_to_low
 
-    def test_wave_alternates(self):
-        """wave戦略は上下フェーズで異なるスコアを返すこと。"""
+    def test_wave_alternates_by_step(self):
+        """wave戦略はstep indexで上下交互に切り替わること。"""
         from vml_audio_lab.tools.setlist import _energy_flow_score
 
         low = _track(energy_level=0.3)
         high = _track(energy_level=0.8)
-        # position 0.0 = 上昇期待フェーズ
-        rise_at_start = _energy_flow_score(low, high, 0.0, "wave")
-        # position 0.25 = 下降許容フェーズ
-        rise_at_quarter = _energy_flow_score(low, high, 0.25, "wave")
-        # 上昇期待フェーズでは上昇が報酬される
-        assert rise_at_start > rise_at_quarter
+        # step=0 (偶数) = 上昇期待
+        rise_step0 = _energy_flow_score(low, high, 0.0, "wave", step=0)
+        # step=1 (奇数) = 下降許容 → 上昇にはスコア低い
+        rise_step1 = _energy_flow_score(low, high, 0.5, "wave", step=1)
+        assert rise_step0 > rise_step1
+
+    def test_wave_works_for_3_tracks(self):
+        """wave戦略が3曲セットでも下降フェーズに到達すること。"""
+        from vml_audio_lab.tools.setlist import _energy_flow_score
+
+        high = _track(energy_level=0.8)
+        low = _track(energy_level=0.3)
+        # step=1 (奇数) で下降が報酬される
+        fall_score = _energy_flow_score(high, low, 1.0, "wave", step=1)
+        rise_score = _energy_flow_score(high, low, 1.0, "wave", step=0)
+        # 下降フェーズ(step=1)のほうが high→low に高スコアを出すこと
+        assert fall_score > rise_score
 
     def test_input_not_mutated(self):
         """入力トラックdictが変更されないこと。"""

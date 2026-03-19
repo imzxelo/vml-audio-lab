@@ -45,35 +45,48 @@ def _make_impulse_reverb(duration: float = 3.0, sr: int = SR) -> np.ndarray:
 
 
 def _make_delay_signal(delay_ms: float = 250.0, sr: int = SR) -> np.ndarray:
-    """ディレイ風の信号: 非ビート同期の等間隔リピート。
+    """ディレイ風の信号: 連続音に減衰エコーを重ねる。
 
-    delay_ms=250 → implied BPM=240 (音楽的BPM範囲外) でビート同期ペナルティを回避。
+    クリック+無音ではなく、短いバーストの後に減衰コピーを重ねることで
+    実際のdelayエフェクトに近い信号を生成する。
+    sidechainの振幅ディップ形状とは明確に区別できる。
     """
     duration = 3.0
     n = int(sr * duration)
-    y = np.zeros(n, dtype=np.float32)
     delay_samples = int(delay_ms * sr / 1000)
-    for i in range(0, n, delay_samples):
-        y[i] = 0.8
-        for echo in range(1, 5):
-            pos = i + echo * delay_samples
-            if pos < n:
-                y[pos] = 0.8 * (0.5 ** echo)
-    return y
+
+    # ベース信号: 周期的な短いバースト（800msごと）
+    y = np.zeros(n, dtype=np.float32)
+    burst_interval = int(0.8 * sr)
+    burst_len = int(0.05 * sr)
+    for start in range(0, n, burst_interval):
+        end = min(start + burst_len, n)
+        t = np.arange(end - start, dtype=np.float32) / sr
+        y[start:end] = np.sin(2 * np.pi * 440 * t) * np.exp(-t / 0.02)
+
+    # エコーを重ねる
+    echoed = np.copy(y)
+    for echo_num in range(1, 6):
+        shift = echo_num * delay_samples
+        if shift < n:
+            gain = 0.5 ** echo_num
+            echoed[shift:] += y[: n - shift] * gain
+
+    return echoed.astype(np.float32)
 
 
 def _make_filter_sweep(sr: int = SR) -> np.ndarray:
-    """フィルタースウィープ風: ホワイトノイズにLPFを時変で適用。"""
+    """フィルタースウィープ風: チャープ信号（周波数が200Hz→8000Hzに上昇）。
+
+    spectral_centroid が単調上昇するので _detect_filter_sweep が検出できる。
+    """
+    from scipy.signal import chirp
+
     duration = 4.0
     n = int(sr * duration)
-    noise = np.random.randn(n).astype(np.float32) * 0.3
-    y = np.zeros(n, dtype=np.float32)
-    for i in range(n):
-        ratio = i / n
-        window = max(1, int((1.0 - ratio) * 50))
-        start = max(0, i - window)
-        y[i] = np.mean(noise[start : i + 1])
-    return y * 3.0
+    t = np.linspace(0, duration, n, endpoint=False)
+    y = chirp(t, f0=200, f1=8000, t1=duration, method="linear").astype(np.float32)
+    return y * 0.5
 
 
 def _make_sidechain_signal(bpm: float = 128.0, sr: int = SR) -> np.ndarray:
@@ -149,8 +162,18 @@ class TestDetectDelay:
         y = _make_sidechain_signal(bpm=128)
         result = _detect_delay(y, SR)
         assert result["type"] == "delay"
-        # beat_sync_penalty should suppress confidence
+        # sidechain penalty should suppress confidence
         assert result["confidence"] < 0.5 or result["detected"] is False
+
+    def test_tempo_sync_delay_still_detected(self):
+        """テンポ同期のdelay (375ms=付点8分@128BPM) はdelayとして検出されること。"""
+        # 375ms のディレイ → implied BPM = 160 → 音楽的BPM範囲内だが、
+        # sidechainの振幅ディップがないのでペナルティなし
+        y = _make_delay_signal(delay_ms=375)
+        result = _detect_delay(y, SR)
+        assert result["type"] == "delay"
+        # sidechain_penalty は低い (サイドチェイン形状がないから)
+        assert result["details"].get("sidechain_penalty", 0) < 0.3
 
 
 class TestDetectFilterSweep:
@@ -158,9 +181,9 @@ class TestDetectFilterSweep:
         y = _make_filter_sweep()
         result = _detect_filter_sweep(y, SR)
         assert result["type"] == "filter_sweep"
-        # フィルタースウィープ合成信号で検出されること
-        # NOTE: 簡易合成では検出閾値を超えないことがある → confidence > 0 を検証
-        assert result["confidence"] >= 0.0
+        assert result["detected"] is True
+        assert result["confidence"] > 0.3
+        assert result["details"]["direction"] == "rising"
 
     def test_static_spectrum_no_sweep(self):
         y = _make_sine(duration=3.0)

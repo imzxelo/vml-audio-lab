@@ -93,11 +93,14 @@ def _energy_flow_score(
     track_b: dict,
     position_ratio: float,
     strategy: str,
+    step: int = 0,
 ) -> float:
     """エネルギーフロースコア (0.0-1.0)。
 
-    position_ratio: 0.0 (セット開始) ～ 1.0 (セット終了)
-    strategy: "build" | "peak" | "wave"
+    Args:
+        position_ratio: 0.0 (セット開始) ～ 1.0 (セット終了)
+        strategy: "build" | "peak" | "wave"
+        step: トランジションのインデックス (0-indexed)。wave で使用。
     """
     ea = _get_energy(track_a)
     eb = _get_energy(track_b)
@@ -124,11 +127,9 @@ def _energy_flow_score(
         return max(0.0, abs_bonus + diff * 3)
 
     if strategy == "wave":
-        # 上下を交互に繰り返すことを報酬にする
-        # position_ratio で奇数/偶数ブロックの上下を期待
-        # 0-0.25: 上昇期待、0.25-0.5: 下降許容、0.5-0.75: 上昇、0.75-1.0: 下降
-        cycle = (position_ratio * 4) % 2  # 0-1-0-1 のサイクル
-        if cycle < 1.0:
+        # step index で直接交互判定。偶数=上昇期待、奇数=下降許容。
+        # position_ratio ベースだと小セットで下降フェーズに入らない問題を回避。
+        if step % 2 == 0:
             # 上昇期待フェーズ
             return min(1.0, 0.6 + diff * 2) if diff >= 0 else max(0.0, 0.3 + diff)
         # 下降許容フェーズ
@@ -157,11 +158,12 @@ def _compute_transition_score(
     position_ratio: float,
     energy_strategy: str,
     weights: dict[str, float],
+    step: int = 0,
 ) -> float:
     """2トラック間の遷移スコアを計算する。"""
     ks = _key_score(track_a, track_b)
     bs = _bpm_score(track_a, track_b)
-    es = _energy_flow_score(track_a, track_b, position_ratio, energy_strategy)
+    es = _energy_flow_score(track_a, track_b, position_ratio, energy_strategy, step=step)
     gs = _genre_coherence_score(track_a, track_b)
 
     return (
@@ -203,7 +205,7 @@ def _greedy_order(
 
             for j, candidate in enumerate(remaining):
                 score = _compute_transition_score(
-                    order[-1], candidate, pos_ratio, energy_strategy, weights
+                    order[-1], candidate, pos_ratio, energy_strategy, weights, step=step
                 )
                 if score > best_next_score:
                     best_next_score = score
@@ -298,7 +300,7 @@ def build_setlist(
         b = ordered[i + 1]
         pos_ratio = i / max(1, n - 2)
 
-        score = _compute_transition_score(a, b, pos_ratio, energy_curve, w)
+        score = _compute_transition_score(a, b, pos_ratio, energy_curve, w, step=i)
         transition_type = recommend_transition_type(a, b)
 
         ca = _get_camelot(a)

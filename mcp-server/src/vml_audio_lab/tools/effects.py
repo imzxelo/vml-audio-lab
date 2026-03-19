@@ -107,34 +107,23 @@ def _detect_delay(y: np.ndarray, sr: int) -> dict:
     # ピーク高さの平均
     peak_heights = float(np.mean(properties["peak_heights"])) if "peak_heights" in properties else 0.3
 
-    # --- ビート同期ポンピングとの区別 ---
-    # ピーク間隔をBPMに変換し、音楽的BPM範囲(60-200)に入るなら
-    # サイドチェイン由来の可能性が高い → 信頼度を大幅に下げる
+    # --- サイドチェインとの形状ベース区別 ---
+    # BPM範囲だけで判断するとテンポ同期delayまで排除してしまう。
+    # 代わりに同じ信号でsidechain検出を走らせ、sidechainの特徴
+    # (非対称な振幅ディップ) が強い場合のみペナルティを適用する。
     hop_length = 512
     delay_time_sec = float(interval_mean * hop_length / sr) if interval_mean > 0 else 0.0
     implied_bpm = 60.0 / delay_time_sec if delay_time_sec > 0 else 0.0
 
-    beat_sync_penalty = 0.0
-    if 60 <= implied_bpm <= 200:
-        # ビート間隔に一致 → ポンピング由来の可能性大
-        beat_sync_penalty = 0.5
-        # BPMをbeat_trackで確認し、一致度が高いほどペナルティ増
-        try:
-            tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-            if hasattr(tempo, "__len__"):
-                tempo = float(tempo[0]) if len(tempo) > 0 else 0.0
-            else:
-                tempo = float(tempo)
-            # 推定BPMとの差が5%以内ならほぼ確実にビート由来
-            if tempo > 0 and abs(implied_bpm - tempo) / tempo < 0.05:
-                beat_sync_penalty = 0.8
-            elif tempo > 0 and abs(implied_bpm - tempo) / tempo < 0.15:
-                beat_sync_penalty = 0.6
-        except Exception:
-            pass
+    sidechain_penalty = 0.0
+    sidechain_result = _detect_sidechain(y, sr)
+    if sidechain_result.get("detected"):
+        # サイドチェインの振幅ディップが確認された → delay自信を下げる
+        sc_conf = sidechain_result.get("confidence", 0.0)
+        sidechain_penalty = sc_conf * 0.7  # sidechain確信度に比例
 
     raw_confidence = min(1.0, regularity * 0.6 + peak_heights * 0.4)
-    confidence = max(0.0, raw_confidence - beat_sync_penalty)
+    confidence = max(0.0, raw_confidence - sidechain_penalty)
     detected = confidence > 0.5 and len(peaks) >= 2
 
     return {
@@ -146,7 +135,7 @@ def _detect_delay(y: np.ndarray, sr: int) -> dict:
             "regularity": round(regularity, 3),
             "num_echoes": len(peaks),
             "implied_bpm": round(implied_bpm, 1),
-            "beat_sync_penalty": round(beat_sync_penalty, 3),
+            "sidechain_penalty": round(sidechain_penalty, 3),
         },
     }
 
@@ -172,29 +161,21 @@ def _detect_filter_sweep(y: np.ndarray, sr: int) -> dict:
     if len(smoothed) < 10:
         return {"type": "filter_sweep", "detected": False, "confidence": 0.0}
 
-    # 勾配を計算
-    gradient = np.gradient(smoothed)
-    centroid_std = float(np.std(centroid))
+    # ピアソン相関で単調トレンドを検出。
+    # 勾配閾値だと分散が大きいスウィープほど検出しにくくなるため、
+    # 時間軸との相関係数で方向の一貫性を測る。
+    time_axis = np.arange(len(smoothed), dtype=np.float64)
+    corr_matrix = np.corrcoef(time_axis, smoothed)
+    pearson_r = float(corr_matrix[0, 1]) if corr_matrix.shape == (2, 2) else 0.0
 
-    # 連続的な上昇/下降区間を検出
-    sweep_threshold = centroid_std * 0.3
-    rising = gradient > sweep_threshold
-    falling = gradient < -sweep_threshold
+    abs_r = abs(pearson_r)
+    # |r| > 0.7 で有意な単調トレンドとみなす
+    detected = abs_r > 0.7
 
-    # 最長の連続区間を見つける
-    max_rising_run = _max_consecutive(rising)
-    max_falling_run = _max_consecutive(falling)
-    max_run = max(max_rising_run, max_falling_run)
+    # 信頼度: 相関の強さに比例
+    confidence = min(1.0, max(0.0, (abs_r - 0.3) / 0.7))
 
-    # 全体の2秒以上（約8-10フレーム）のスウィープがあれば検出
-    min_frames = max(8, int(2.0 * sr / 512 / window))
-    detected = max_run >= min_frames
-
-    # 信頼度: スウィープの長さと勾配の一貫性
-    run_ratio = min(1.0, max_run / len(smoothed))
-    confidence = min(1.0, run_ratio * 1.5)
-
-    direction = "rising" if max_rising_run >= max_falling_run else "falling"
+    direction = "rising" if pearson_r > 0 else "falling"
 
     return {
         "type": "filter_sweep",
@@ -202,8 +183,7 @@ def _detect_filter_sweep(y: np.ndarray, sr: int) -> dict:
         "confidence": round(confidence, 3),
         "details": {
             "direction": direction,
-            "max_sweep_frames": int(max_run),
-            "sweep_duration_est_sec": round(max_run * 512 / sr, 2),
+            "pearson_r": round(pearson_r, 3),
         },
     }
 
@@ -248,6 +228,12 @@ def _detect_sidechain(y: np.ndarray, sr: int) -> dict:
             continue
 
         min_val = float(np.min(segment[1:]))
+
+        # 最小値がほぼ無音 (< 0.01) の場合は「信号の切れ目」であり、
+        # サイドチェインのダッキングではない。スキップする。
+        if min_val < 0.01:
+            continue
+
         dip = 1.0 - (min_val / peak_val)
         dip_depths.append(dip)
 
