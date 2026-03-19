@@ -67,6 +67,8 @@ def _detect_delay(y: np.ndarray, sr: int) -> dict:
     """ディレイ（エコー）を検出する。
 
     振幅エンベロープの自己相関で等間隔の反復パターンを検出。
+    ビート同期のポンピング（サイドチェイン）と区別するため、
+    ピーク間隔がビート間隔と一致する場合は除外する。
     """
     import librosa
 
@@ -105,12 +107,35 @@ def _detect_delay(y: np.ndarray, sr: int) -> dict:
     # ピーク高さの平均
     peak_heights = float(np.mean(properties["peak_heights"])) if "peak_heights" in properties else 0.3
 
-    confidence = min(1.0, regularity * 0.6 + peak_heights * 0.4)
-    detected = confidence > 0.5 and len(peaks) >= 2
-
-    # ディレイタイムの推定 (フレーム → 秒)
+    # --- ビート同期ポンピングとの区別 ---
+    # ピーク間隔をBPMに変換し、音楽的BPM範囲(60-200)に入るなら
+    # サイドチェイン由来の可能性が高い → 信頼度を大幅に下げる
     hop_length = 512
     delay_time_sec = float(interval_mean * hop_length / sr) if interval_mean > 0 else 0.0
+    implied_bpm = 60.0 / delay_time_sec if delay_time_sec > 0 else 0.0
+
+    beat_sync_penalty = 0.0
+    if 60 <= implied_bpm <= 200:
+        # ビート間隔に一致 → ポンピング由来の可能性大
+        beat_sync_penalty = 0.5
+        # BPMをbeat_trackで確認し、一致度が高いほどペナルティ増
+        try:
+            tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+            if hasattr(tempo, "__len__"):
+                tempo = float(tempo[0]) if len(tempo) > 0 else 0.0
+            else:
+                tempo = float(tempo)
+            # 推定BPMとの差が5%以内ならほぼ確実にビート由来
+            if tempo > 0 and abs(implied_bpm - tempo) / tempo < 0.05:
+                beat_sync_penalty = 0.8
+            elif tempo > 0 and abs(implied_bpm - tempo) / tempo < 0.15:
+                beat_sync_penalty = 0.6
+        except Exception:
+            pass
+
+    raw_confidence = min(1.0, regularity * 0.6 + peak_heights * 0.4)
+    confidence = max(0.0, raw_confidence - beat_sync_penalty)
+    detected = confidence > 0.5 and len(peaks) >= 2
 
     return {
         "type": "delay",
@@ -120,6 +145,8 @@ def _detect_delay(y: np.ndarray, sr: int) -> dict:
             "delay_time_sec": round(delay_time_sec, 3),
             "regularity": round(regularity, 3),
             "num_echoes": len(peaks),
+            "implied_bpm": round(implied_bpm, 1),
+            "beat_sync_penalty": round(beat_sync_penalty, 3),
         },
     }
 
@@ -278,13 +305,10 @@ def detect_effects(
             - effects_summary: セクションごとのエフェクトマップ
             - dominant_effect: 最も目立つエフェクト
     """
-    import librosa
-
     from vml_audio_lab.tools.loader import DEFAULT_SR, load_y
 
-    y, sr = load_y(y_path)
-    if sr is None:
-        sr = DEFAULT_SR
+    y = load_y(y_path)
+    sr = DEFAULT_SR
 
     if sections:
         return _analyze_with_sections(y, sr, sections)
@@ -328,7 +352,7 @@ def _analyze_with_sections(
         end_sec = float(section.get("end", len(y) / sr))
         label = section.get("label", "Unknown")
 
-        start_sample = int(start_sec * sr)
+        start_sample = max(0, int(start_sec * sr))
         end_sample = min(int(end_sec * sr), len(y))
 
         if end_sample <= start_sample:

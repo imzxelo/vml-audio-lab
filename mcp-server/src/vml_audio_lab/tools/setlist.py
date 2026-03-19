@@ -115,14 +115,24 @@ def _energy_flow_score(
         return max(0.0, 0.5 + diff)
 
     if strategy == "peak":
-        # 最初からハイエネルギー。下降をペナルティ
+        # 絶対エネルギーの高さを評価 + 下降ペナルティ
+        # eb が高いほどボーナス、下降は強くペナルティ
+        abs_bonus = min(0.5, eb * 0.5)  # 高エネルギートラックを優先
         if diff >= 0:
-            return 0.8
-        return max(0.0, 0.6 + diff * 2)
+            return min(1.0, abs_bonus + 0.4)
+        # 下降は厳しくペナルティ（peakなので落とすな）
+        return max(0.0, abs_bonus + diff * 3)
 
     if strategy == "wave":
-        # 上下動を許容。急激な変化をペナルティ
-        return max(0.0, 1.0 - abs(diff) * 2)
+        # 上下を交互に繰り返すことを報酬にする
+        # position_ratio で奇数/偶数ブロックの上下を期待
+        # 0-0.25: 上昇期待、0.25-0.5: 下降許容、0.5-0.75: 上昇、0.75-1.0: 下降
+        cycle = (position_ratio * 4) % 2  # 0-1-0-1 のサイクル
+        if cycle < 1.0:
+            # 上昇期待フェーズ
+            return min(1.0, 0.6 + diff * 2) if diff >= 0 else max(0.0, 0.3 + diff)
+        # 下降許容フェーズ
+        return min(1.0, 0.6 - diff * 2) if diff <= 0 else max(0.0, 0.4 - diff)
 
     return 0.5  # fallback
 
@@ -274,6 +284,8 @@ def build_setlist(
     weak_points: list[dict] = []
     energy_flow: list[float] = []
 
+    # 入力を汚染しないようコピーして注釈を付ける
+    ordered = [dict(t) for t in ordered]
     for i, track in enumerate(ordered):
         energy = _get_energy(track)
         energy_flow.append(energy)

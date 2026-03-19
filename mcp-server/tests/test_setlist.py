@@ -191,6 +191,57 @@ class TestBuildSetlist:
         assert len(build_result["ordered_tracks"]) == 2
         assert len(peak_result["ordered_tracks"]) == 2
 
+    def test_peak_differs_from_build(self):
+        """peak戦略はbuild戦略と異なる順序またはスコアを返すこと。"""
+        from vml_audio_lab.tools.setlist import _energy_flow_score
+
+        # peak: 高エネルギー絶対値を報酬。build: 上昇を報酬
+        # Low→High の flow score が異なることを検証
+        low = _track(energy_level=0.2)
+        high = _track(energy_level=0.9)
+
+        build_score = _energy_flow_score(low, high, 0.3, "build")
+        peak_score = _energy_flow_score(low, high, 0.3, "peak")
+        # build は上昇を報酬するので高スコア、peak は eb の絶対値を見る
+        # 両者のスコアが異なること（同じロジックではないこと）
+        assert build_score != peak_score
+
+    def test_peak_rewards_absolute_energy(self):
+        """peak戦略は高エネルギートラックへの遷移を報酬すること。"""
+        from vml_audio_lab.tools.setlist import _energy_flow_score
+
+        high_to_high = _energy_flow_score(
+            _track(energy_level=0.8), _track(energy_level=0.9), 0.5, "peak"
+        )
+        high_to_low = _energy_flow_score(
+            _track(energy_level=0.8), _track(energy_level=0.2), 0.5, "peak"
+        )
+        assert high_to_high > high_to_low
+
+    def test_wave_alternates(self):
+        """wave戦略は上下フェーズで異なるスコアを返すこと。"""
+        from vml_audio_lab.tools.setlist import _energy_flow_score
+
+        low = _track(energy_level=0.3)
+        high = _track(energy_level=0.8)
+        # position 0.0 = 上昇期待フェーズ
+        rise_at_start = _energy_flow_score(low, high, 0.0, "wave")
+        # position 0.25 = 下降許容フェーズ
+        rise_at_quarter = _energy_flow_score(low, high, 0.25, "wave")
+        # 上昇期待フェーズでは上昇が報酬される
+        assert rise_at_start > rise_at_quarter
+
+    def test_input_not_mutated(self):
+        """入力トラックdictが変更されないこと。"""
+        tracks = [
+            _track(title="A"),
+            _track(title="B"),
+        ]
+        original_keys_a = set(tracks[0].keys())
+        build_setlist(tracks)
+        # _position, _phase が元のdictに追加されていないこと
+        assert set(tracks[0].keys()) == original_keys_a
+
 
 class TestVisualizeSetlistEnergy:
     def test_empty_returns_empty_bytes(self):
