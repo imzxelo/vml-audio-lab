@@ -7,7 +7,6 @@ Camelot キー互換性、BPM 進行、エネルギーフロー、ジャンル�
 from __future__ import annotations
 
 import io
-from typing import Callable
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -51,7 +50,10 @@ def _get_genre(track: dict) -> str:
 
 def _get_energy(track: dict) -> float:
     """トラックからエネルギーを取得する。"""
-    return float(track.get("energy_level") or track.get("energy", 0.5))
+    val = track.get("energy_level")
+    if val is None:
+        val = track.get("energy")
+    return float(val) if val is not None else 0.5
 
 
 def _get_camelot(track: dict) -> str:

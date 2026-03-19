@@ -1,6 +1,5 @@
 """dj_context.py のテスト."""
 
-import pytest
 
 from vml_audio_lab.utils.dj_context import (
     classify_energy_phase,

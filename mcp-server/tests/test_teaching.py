@@ -1,6 +1,5 @@
 """teaching.py のテスト."""
 
-import pytest
 
 from vml_audio_lab.utils.teaching import (
     explain_bpm_transition,

@@ -1,7 +1,5 @@
 """setlist.py のテスト."""
 
-import pytest
-
 from vml_audio_lab.tools.setlist import (
     _bpm_score,
     _compute_transition_score,

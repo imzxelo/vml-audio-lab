@@ -30,7 +30,6 @@ def _detect_reverb(y: np.ndarray, sr: int) -> dict:
 
     # オンセット後のエネルギー減衰率を計算
     decay_rates: list[float] = []
-    hop_length = 512  # librosa default
     for onset_f in onset_frames:
         if onset_f + 10 >= len(rms):
             continue

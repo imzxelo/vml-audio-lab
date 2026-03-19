@@ -8,7 +8,6 @@ import tempfile
 from unittest.mock import patch
 
 import numpy as np
-import pytest
 
 from vml_audio_lab.tools.effects import (
     _analyze_with_sections,

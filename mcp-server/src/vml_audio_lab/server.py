@@ -12,16 +12,16 @@ from vml_audio_lab.tools.camelot import (
     key_to_camelot,
 )
 from vml_audio_lab.tools.cues import recommend_cues
+from vml_audio_lab.tools.effects import detect_effects
 from vml_audio_lab.tools.genre import canonicalize_genre_slug, detect_genre, genre_group_for
 from vml_audio_lab.tools.library import find_compatible_tracks_by_params, scan_library
 from vml_audio_lab.tools.loader import DEFAULT_SR, load_track, load_y
 from vml_audio_lab.tools.mood import detect_mood
 from vml_audio_lab.tools.playlist import generate_playlists, get_compatible_playlists
+from vml_audio_lab.tools.setlist import build_setlist, visualize_setlist_energy
 from vml_audio_lab.tools.structure import detect_structure
 from vml_audio_lab.tools.transition import suggest_transition
 from vml_audio_lab.tools.usb_export import copy_to_usb, split_artist_title, update_rekordbox_xml
-from vml_audio_lab.tools.effects import detect_effects
-from vml_audio_lab.tools.setlist import build_setlist, visualize_setlist_energy
 from vml_audio_lab.tools.visualize import spectrogram, waveform_overview
 
 mcp = FastMCP(

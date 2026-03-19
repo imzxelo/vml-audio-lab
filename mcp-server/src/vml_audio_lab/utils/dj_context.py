@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-
 # ジャンルペア → 推奨トランジションタイプのマッピング
 _GENRE_TRANSITION_OVERRIDES: dict[frozenset[str], str] = {
     frozenset({"hiphop", "rnb"}): "echo_out",
