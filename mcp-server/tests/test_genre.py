@@ -104,3 +104,54 @@ def test_detect_genre_includes_halftime_corrected_field(monkeypatch) -> None:
     result = detect_genre(title="Boom Bap Beat", artist="MC Test", y=y, sr=44100)
 
     assert "halftime_corrected" in result
+
+
+# --- R&B ジャンル対応テスト ---
+
+
+def test_canonicalize_rnb_aliases() -> None:
+    """R&B エイリアスが正しく正規化される。"""
+    assert canonicalize_genre_slug("r&b") == "rnb"
+    assert canonicalize_genre_slug("R&B") == "rnb"
+    assert canonicalize_genre_slug("neo-soul") == "rnb"
+    assert canonicalize_genre_slug("neo soul") == "rnb"
+    assert canonicalize_genre_slug("neosoul") == "rnb"
+    assert canonicalize_genre_slug("rnb") == "rnb"
+    assert canonicalize_genre_slug("r and b") == "rnb"
+
+
+def test_rnb_not_in_hiphop_keywords() -> None:
+    """r&b / rnb が hiphop のキーワードから分離されていること。"""
+    from vml_audio_lab.tools.genre import _GENRE_KEYWORDS
+
+    hiphop_kws = _GENRE_KEYWORDS["hiphop"]
+    assert "r&b" not in hiphop_kws
+    assert "rnb" not in hiphop_kws
+    # rnb カテゴリに存在すること
+    assert "r&b" in _GENRE_KEYWORDS["rnb"]
+    assert "rnb" in _GENRE_KEYWORDS["rnb"]
+
+
+def test_halftime_correction_applied_to_rnb() -> None:
+    """R&B の倍テン BPM が補正されること。"""
+    corrected = _apply_halftime_correction(188.0, "rnb")
+    assert corrected == 94.0
+
+
+def test_halftime_correction_rnb_below_120_not_corrected() -> None:
+    """R&B で BPM <= 120 は補正しない。"""
+    corrected = _apply_halftime_correction(94.0, "rnb")
+    assert corrected == 94.0
+
+
+def test_detect_genre_rnb_from_text(monkeypatch) -> None:
+    """テキストから R&B が判定されること。"""
+    monkeypatch.setattr("vml_audio_lab.tools.genre._fetch_web_text", lambda *a, **k: "r&b rnb soul")
+    monkeypatch.setattr(
+        "vml_audio_lab.tools.genre._detect_from_audio",
+        lambda y, sr: ("rnb", 0.44),
+    )
+    y = np.zeros(44100, dtype=np.float32)
+    result = detect_genre(title="ふたりごと", artist="iri", y=y, sr=44100)
+    assert result["genre"] == "rnb"
+    assert result["genre_group"] == "rnb"

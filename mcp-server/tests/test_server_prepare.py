@@ -29,7 +29,7 @@ def _patch_common(monkeypatch, local_audio: Path) -> None:
     )
     monkeypatch.setattr(
         "vml_audio_lab.server.recommend_cues",
-        lambda y_path: {
+        lambda y_path, genre=None: {
             "duration_sec": 210.0,
             "hot_cues": [{"name": "A", "time_sec": 10.0}],
             "memory_cues": [{"name": "Intro", "time_sec": 0.0}],

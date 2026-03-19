@@ -17,6 +17,13 @@ _GENRE_LABEL_MAP: dict[str, dict[str, str]] = {
         "mid_energy": "Verse",
         "outro": "Outro",
     },
+    "rnb": {
+        "intro": "Intro",
+        "high_energy": "Chorus",
+        "low_energy": "Bridge",
+        "mid_energy": "Verse",
+        "outro": "Outro",
+    },
     "jpop": {
         "intro": "Intro",
         "high_energy": "サビ",
@@ -45,6 +52,7 @@ _GENRE_LABEL_MAP: dict[str, dict[str, str]] = {
 # genre.py の _GENRE_GROUP と対応する。ここでは structure.py 独立で持つ。
 _GENRE_SLUG_TO_LABEL_GROUP: dict[str, str] = {
     "hiphop": "hiphop",
+    "rnb": "rnb",
     "jpop": "jpop",
     "classical": "classical",
     # DJ系はすべて default
@@ -255,13 +263,15 @@ def detect_structure(
         mask = (rms_times >= start) & (rms_times < end)
         segment_energy = float(np.mean(rms[mask])) if np.any(mask) else 0.0
 
-        sections.append({
-            "start": round(start, 2),
-            "end": round(end, 2),
-            "start_label": _format_time(start),
-            "end_label": _format_time(end),
-            "energy": segment_energy,
-        })
+        sections.append(
+            {
+                "start": round(start, 2),
+                "end": round(end, 2),
+                "start_label": _format_time(start),
+                "end_label": _format_time(end),
+                "energy": segment_energy,
+            }
+        )
 
     # エネルギーを 0〜1 に正規化
     max_energy = max(s["energy"] for s in sections) if sections else 1.0

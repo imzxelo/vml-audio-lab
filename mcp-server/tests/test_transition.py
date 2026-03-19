@@ -52,8 +52,15 @@ class TestSuggestTransitionReturnSchema:
         track_a = _track(id="1")
         track_b = _track(id="2")
         result = suggest_transition(track_a, track_b)
-        for field in ("key_compatibility", "key_description", "energy_match",
-                      "bpm_diff", "compatibility", "suggestion", "section_suggestion"):
+        for field in (
+            "key_compatibility",
+            "key_description",
+            "energy_match",
+            "bpm_diff",
+            "compatibility",
+            "suggestion",
+            "section_suggestion",
+        ):
             assert field in result, f"Missing field: {field}"
 
     def test_key_compatibility_is_float(self) -> None:
@@ -321,3 +328,45 @@ class TestGenreSpecificSuggestions:
         # hiphop テクニック: エコーアウトまたはクイックカット
         technique = ss.get("technique", "")
         assert len(technique) > 0
+
+    def test_rnb_genre_uses_fade_technique(self) -> None:
+        """R&B ジャンルはフェード/エコーアウトのテクニックを使う。"""
+        track_a = _track(genre="rnb", bpm=94.0)
+        track_b = _track(genre="rnb", bpm=90.0)
+        result = suggest_transition(track_a, track_b)
+        ss = result["section_suggestion"]
+        technique = ss.get("technique", "")
+        assert "フェード" in technique or "エコー" in technique
+
+    def test_rnb_section_priority_picks_chorus(self) -> None:
+        """R&B の Chorus セクションが入点候補として認識される。"""
+        track_a = _track(genre="rnb", bpm=94.0)
+        track_b = _track(
+            genre="rnb",
+            bpm=90.0,
+            sections=[
+                {"label": "Intro", "start": 0.0, "end": 15.0, "energy": 0.3},
+                {"label": "Verse", "start": 15.0, "end": 50.0, "energy": 0.5},
+                {"label": "Chorus", "start": 50.0, "end": 90.0, "energy": 0.9},
+            ],
+        )
+        result = suggest_transition(track_a, track_b)
+        in_label = result["section_suggestion"]["in_point"].get("section", "")
+        assert in_label == "Intro"  # Intro が最優先
+
+    def test_rnb_out_section_prefers_bridge(self) -> None:
+        """R&B の Bridge セクションが出点候補として優先される。"""
+        track_a = _track(
+            genre="rnb",
+            bpm=94.0,
+            sections=[
+                {"label": "Chorus", "start": 30.0, "end": 60.0, "energy": 0.9},
+                {"label": "Bridge", "start": 60.0, "end": 90.0, "energy": 0.3},
+                {"label": "Outro", "start": 90.0, "end": 110.0, "energy": 0.2},
+            ],
+        )
+        track_b = _track(genre="rnb", bpm=90.0)
+        result = suggest_transition(track_a, track_b)
+        out_label = result["section_suggestion"]["out_point"].get("section", "")
+        # Bridge か Outro が優先されるはず
+        assert out_label in ("Bridge", "Outro")
