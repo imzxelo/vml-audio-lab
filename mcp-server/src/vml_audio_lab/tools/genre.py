@@ -26,7 +26,8 @@ _GENRE_KEYWORDS: dict[str, tuple[str, ...]] = {
     ),
     "dnb": ("dnb", "drum and bass", "drum & bass", "liquid dnb", "neurofunk"),
     "trance": ("trance", "uplifting trance", "progressive trance", "psytrance"),
-    "hiphop": ("hip hop", "hip-hop", "rap", "trap", "boom bap", "r&b", "rnb"),
+    "hiphop": ("hip hop", "hip-hop", "rap", "trap", "boom bap"),
+    "rnb": ("r&b", "rnb", "r and b", "neo-soul", "neo soul", "soul", "rhythm and blues"),
     "jpop": ("j-pop", "jpop", "j pop", "japanese pop", "city pop", "j-rock", "anime"),
     "electronic": ("electronic", "edm", "electronica", "synth pop", "future bass"),
     "classical": ("classical", "orchestra", "symphony", "piano", "chamber music", "opera"),
@@ -43,6 +44,7 @@ _GENRE_GROUP: dict[str, str] = {
     "dnb": "dnb",
     "trance": "trance",
     "hiphop": "hiphop",
+    "rnb": "rnb",
     "jpop": "jpop",
     "electronic": "electronic",
     "classical": "classical",
@@ -59,6 +61,12 @@ _GENRE_ALIASES: dict[str, str] = {
     "d&b": "dnb",
     "hip hop": "hiphop",
     "hip-hop": "hiphop",
+    "r&b": "rnb",
+    "r and b": "rnb",
+    "neo-soul": "rnb",
+    "neo soul": "rnb",
+    "neosoul": "rnb",
+    "rhythm and blues": "rnb",
     "deep house": "deep-house",
     "deephouse": "deep-house",
     "uk garage": "uk-garage",
@@ -84,6 +92,7 @@ _GENRE_BPM_RANGE: dict[str, tuple[float, float]] = {
     "techno": (128.0, 140.0),
     "deep-techno": (125.0, 135.0),
     "hiphop": (70.0, 110.0),
+    "rnb": (60.0, 110.0),
     "jpop": (100.0, 180.0),
     "dnb": (160.0, 180.0),
     "trance": (128.0, 145.0),
@@ -92,7 +101,7 @@ _GENRE_BPM_RANGE: dict[str, tuple[float, float]] = {
 }
 
 # ハーフタイム BPM 補正が必要なジャンル
-_HALFTIME_GENRES: frozenset[str] = frozenset({"hiphop", "jpop"})
+_HALFTIME_GENRES: frozenset[str] = frozenset({"hiphop", "rnb", "jpop"})
 
 
 def canonicalize_genre_slug(genre: str) -> str:
@@ -236,13 +245,19 @@ def _detect_from_audio(y: np.ndarray, sr: int) -> tuple[str, float]:
         return ("electronic", 0.38)
 
     if 70 <= bpm <= 110:
-        # Hip-Hop: 低域厚め
-        if low_ratio > 0.12:
+        # Hip-Hop: 低域厚め + centroid 低め
+        if low_ratio > 0.12 and centroid < 1800:
             return ("hiphop", 0.46)
+        # R&B: 中程度の centroid + 低域がそこそこ（メロディ成分あり）
+        if 1500 <= centroid <= 2500 and low_ratio > 0.06:
+            return ("rnb", 0.44)
         # J-Pop: 高めの centroid (ボーカル成分)
         if centroid > 2500:
             return ("jpop", 0.38)
-        return ("hiphop", 0.40)
+        # Hip-Hop: 低域厚め（centroid 高め寄りだが low_ratio が高い）
+        if low_ratio > 0.12:
+            return ("hiphop", 0.42)
+        return ("rnb", 0.36)
 
     if bpm < 70:
         return ("classical", 0.30)

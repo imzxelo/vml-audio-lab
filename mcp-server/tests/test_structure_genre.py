@@ -39,6 +39,14 @@ class TestGenreLabels:
         assert labels["mid_energy"] == "Aメロ"
         assert labels["outro"] == "Outro"
 
+    def test_rnb_label_set(self) -> None:
+        labels = _genre_labels("rnb")
+        assert labels["intro"] == "Intro"
+        assert labels["high_energy"] == "Chorus"
+        assert labels["low_energy"] == "Bridge"
+        assert labels["mid_energy"] == "Verse"
+        assert labels["outro"] == "Outro"
+
     def test_default_label_set(self) -> None:
         labels = _genre_labels("default")
         assert labels["intro"] == "Intro"
@@ -69,10 +77,7 @@ class TestAssignLabels:
 
     def _make_sections(self, energies: list[float]) -> list[dict]:
         """テスト用セクションリストを生成する。"""
-        return [
-            {"start": float(i * 30), "end": float((i + 1) * 30), "energy": e}
-            for i, e in enumerate(energies)
-        ]
+        return [{"start": float(i * 30), "end": float((i + 1) * 30), "energy": e} for i, e in enumerate(energies)]
 
     def test_dj_default_labels_intro_outro(self) -> None:
         sections = self._make_sections([0.5, 0.8, 0.4, 0.5])
@@ -94,6 +99,23 @@ class TestAssignLabels:
         sections = self._make_sections([0.5, 0.5, 0.8, 0.5])
         _assign_labels(sections, genre_group="default")
         assert sections[1]["label"] == "Build"
+
+    def test_rnb_high_energy_is_chorus(self) -> None:
+        sections = self._make_sections([0.5, 0.9, 0.4, 0.5])
+        _assign_labels(sections, genre_group="rnb")
+        assert sections[0]["label"] == "Intro"
+        assert sections[1]["label"] == "Chorus"
+        assert sections[-1]["label"] == "Outro"
+
+    def test_rnb_low_energy_is_bridge(self) -> None:
+        sections = self._make_sections([0.5, 0.8, 0.2, 0.5])
+        _assign_labels(sections, genre_group="rnb")
+        assert sections[2]["label"] == "Bridge"
+
+    def test_rnb_mid_energy_is_verse(self) -> None:
+        sections = self._make_sections([0.5, 0.5, 0.9, 0.5])
+        _assign_labels(sections, genre_group="rnb")
+        assert sections[1]["label"] == "Verse"
 
     def test_hiphop_high_energy_is_hook(self) -> None:
         sections = self._make_sections([0.5, 0.9, 0.4, 0.5])
@@ -205,10 +227,10 @@ class TestDetectStructureWithGenre:
         """3分30秒の構造化音声."""
         sr = 22050
         sections = [
-            (60, 0.1, 220),   # quiet - Intro
-            (60, 0.5, 440),   # mid
-            (60, 1.0, 880),   # high energy
-            (30, 0.2, 220),   # fade - Outro
+            (60, 0.1, 220),  # quiet - Intro
+            (60, 0.5, 440),  # mid
+            (60, 1.0, 880),  # high energy
+            (30, 0.2, 220),  # fade - Outro
         ]
         parts = []
         for dur, amp, freq in sections:
@@ -231,25 +253,33 @@ class TestDetectStructureWithGenre:
         result = detect_structure(long_y_path, genre_group="hiphop")
         valid_labels = {"Intro", "Hook", "Bridge", "Verse", "Outro"}
         for section in result["sections"]:
-            assert section["label"] in valid_labels, (
-                f"Unexpected Hip-Hop label: {section['label']}"
-            )
+            assert section["label"] in valid_labels, f"Unexpected Hip-Hop label: {section['label']}"
 
     def test_jpop_structure_uses_jpop_labels(self, long_y_path: str) -> None:
         result = detect_structure(long_y_path, genre_group="jpop")
         valid_labels = {"Intro", "サビ", "落ちサビ", "Aメロ", "Bメロ", "大サビ", "Outro"}
         for section in result["sections"]:
-            assert section["label"] in valid_labels, (
-                f"Unexpected J-Pop label: {section['label']}"
-            )
+            assert section["label"] in valid_labels, f"Unexpected J-Pop label: {section['label']}"
+
+    def test_rnb_structure_uses_rnb_labels(self, long_y_path: str) -> None:
+        result = detect_structure(long_y_path, genre_group="rnb")
+        valid_labels = {"Intro", "Chorus", "Bridge", "Verse", "Outro"}
+        for section in result["sections"]:
+            assert section["label"] in valid_labels, f"Unexpected R&B label: {section['label']}"
+
+    def test_rnb_via_genre_slug(self, long_y_path: str) -> None:
+        """genre='rnb' スラグで R&B ラベルが適用される。"""
+        result = detect_structure(long_y_path, genre="rnb")
+        valid_labels = {"Intro", "Chorus", "Bridge", "Verse", "Outro"}
+        for section in result["sections"]:
+            assert section["label"] in valid_labels, f"Unexpected R&B label: {section['label']}"
+        assert result["genre_group"] == "rnb"
 
     def test_default_structure_uses_dj_labels(self, long_y_path: str) -> None:
         result = detect_structure(long_y_path, genre_group="default")
         valid_labels = {"Intro", "Drop", "Break", "Build", "Outro"}
         for section in result["sections"]:
-            assert section["label"] in valid_labels, (
-                f"Unexpected DJ label: {section['label']}"
-            )
+            assert section["label"] in valid_labels, f"Unexpected DJ label: {section['label']}"
 
     def test_hiphop_first_section_is_intro(self, long_y_path: str) -> None:
         result = detect_structure(long_y_path, genre_group="hiphop")
@@ -268,13 +298,11 @@ class TestDetectStructureWithGenre:
         assert result["sections"][-1]["label"] == "Outro"
 
     def test_genre_group_stored_in_result(self, long_y_path: str) -> None:
-        for genre in ("hiphop", "jpop", "default"):
+        for genre in ("hiphop", "rnb", "jpop", "default"):
             result = detect_structure(long_y_path, genre_group=genre)
             assert result["genre_group"] == genre
 
-    def test_short_audio_hiphop_returns_single_section(
-        self, tmp_path_factory: pytest.TempPathFactory
-    ) -> None:
+    def test_short_audio_hiphop_returns_single_section(self, tmp_path_factory: pytest.TempPathFactory) -> None:
         """極短音声 (0.5秒) は genre にかかわらず Full Track を返す."""
         sr = 22050
         y = np.zeros(int(sr * 0.5), dtype=np.float32)

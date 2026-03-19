@@ -47,13 +47,32 @@ class TestCanonicalize10Genres:
         assert canonicalize_genre_slug("drum and bass") == "dnb"
         assert canonicalize_genre_slug("drum & bass") == "dnb"
 
-    def test_all_10_genre_slugs_are_canonical(self) -> None:
-        """全10ジャンルが正規化済みスラグを返す."""
-        genres_10 = [
-            "deep-house", "house", "tech-house", "techno", "deep-techno",
-            "uk-garage", "melodic", "hiphop", "jpop", "electronic", "classical",
+    def test_rnb_aliases(self) -> None:
+        assert canonicalize_genre_slug("r&b") == "rnb"
+        assert canonicalize_genre_slug("R&B") == "rnb"
+        assert canonicalize_genre_slug("neo-soul") == "rnb"
+        assert canonicalize_genre_slug("neo soul") == "rnb"
+        assert canonicalize_genre_slug("neosoul") == "rnb"
+        assert canonicalize_genre_slug("r and b") == "rnb"
+        assert canonicalize_genre_slug("rhythm and blues") == "rnb"
+
+    def test_all_genre_slugs_are_canonical(self) -> None:
+        """全ジャンルが正規化済みスラグを返す."""
+        genres = [
+            "deep-house",
+            "house",
+            "tech-house",
+            "techno",
+            "deep-techno",
+            "uk-garage",
+            "melodic",
+            "hiphop",
+            "rnb",
+            "jpop",
+            "electronic",
+            "classical",
         ]
-        for genre in genres_10:
+        for genre in genres:
             result = canonicalize_genre_slug(genre)
             assert result == genre, f"Expected {genre}, got {result}"
 
@@ -69,6 +88,10 @@ class TestGenreGroupFor10Genres:
     def test_techno_variants_group_to_techno(self) -> None:
         assert genre_group_for("techno") == "techno"
         assert genre_group_for("deep-techno") == "techno"
+
+    def test_rnb_groups_to_rnb(self) -> None:
+        assert genre_group_for("rnb") == "rnb"
+        assert genre_group_for("r&b") == "rnb"
 
     def test_other_genres_group_to_themselves(self) -> None:
         assert genre_group_for("hiphop") == "hiphop"
@@ -106,6 +129,14 @@ class TestDetectFromText10Genres:
         result = _detect_from_text("deephouse deep tech house", "")
         assert result == "deep-house"
 
+    def test_detects_rnb_from_text(self) -> None:
+        result = _detect_from_text("R&B Soul Groove", "")
+        assert result == "rnb"
+
+    def test_detects_neo_soul_from_text(self) -> None:
+        result = _detect_from_text("neo-soul smooth vibes", "")
+        assert result == "rnb"
+
     def test_unknown_when_no_keywords(self) -> None:
         result = _detect_from_text("Track 1", "Artist")
         assert result == "unknown"
@@ -137,9 +168,21 @@ class TestDetectFromAudio10Genres:
     def test_genre_is_known_slug(self) -> None:
         """返されるジャンルが正規化済みスラグである."""
         valid_genres = {
-            "deep-house", "house", "tech-house", "techno", "deep-techno",
-            "uk-garage", "melodic", "hiphop", "jpop", "electronic",
-            "classical", "dnb", "trance", "unknown",
+            "deep-house",
+            "house",
+            "tech-house",
+            "techno",
+            "deep-techno",
+            "uk-garage",
+            "melodic",
+            "hiphop",
+            "rnb",
+            "jpop",
+            "electronic",
+            "classical",
+            "dnb",
+            "trance",
+            "unknown",
         }
         y = np.zeros(44100, dtype=np.float32)
         genre, _ = _detect_from_audio(y, 22050)
@@ -162,6 +205,12 @@ class TestHalftimeBpmCorrection:
 
     def test_hiphop_bpm_below_120_not_corrected(self) -> None:
         assert _apply_halftime_correction(90.0, "hiphop") == 90.0
+
+    def test_rnb_bpm_above_120_corrected(self) -> None:
+        assert _apply_halftime_correction(188.0, "rnb") == 94.0
+
+    def test_rnb_bpm_below_120_not_corrected(self) -> None:
+        assert _apply_halftime_correction(94.0, "rnb") == 94.0
 
     def test_jpop_bpm_above_120_corrected(self) -> None:
         assert _apply_halftime_correction(160.0, "jpop") == 80.0

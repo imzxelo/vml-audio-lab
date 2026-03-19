@@ -34,16 +34,38 @@ def _key_description(camelot_a: str, camelot_b: str, score: float) -> str:
 
 # セクションラベルの優先度 (出点候補: 低エネルギーのセクションを優先)
 _OUT_SECTION_PRIORITY: list[str] = [
-    "Break", "Outro", "落ちサビ", "Bridge", "Verse",
-    "Build", "Hook", "Bメロ", "Aメロ",
-    "Intro", "Drop", "サビ", "大サビ",
+    "Break",
+    "Outro",
+    "落ちサビ",
+    "Bridge",
+    "Verse",
+    "Build",
+    "Hook",
+    "Chorus",
+    "Bメロ",
+    "Aメロ",
+    "Intro",
+    "Drop",
+    "サビ",
+    "大サビ",
 ]
 
 # セクションラベルの優先度 (入点候補: 低エネルギーのセクションを優先)
 _IN_SECTION_PRIORITY: list[str] = [
-    "Intro", "Build", "Verse", "Aメロ",
-    "Break", "Bridge", "Bメロ",
-    "Hook", "サビ", "Drop", "大サビ", "落ちサビ", "Outro",
+    "Intro",
+    "Build",
+    "Verse",
+    "Aメロ",
+    "Break",
+    "Bridge",
+    "Bメロ",
+    "Hook",
+    "Chorus",
+    "サビ",
+    "Drop",
+    "大サビ",
+    "落ちサビ",
+    "Outro",
 ]
 
 
@@ -83,6 +105,7 @@ _GENRE_TECHNIQUE: dict[str, str] = {
     "dnb": "EQスワップで8小節ブレンド",
     "trance": "フィルタースウィープで32小節ブレンド",
     "hiphop": "エコーアウトまたはクイックカット",
+    "rnb": "フェードまたはエコーアウトで自然に繋ぐ",
     "jpop": "カットまたはフィルタースウィープ",
     "electronic": "EQスワップで8〜16小節ブレンド",
     "classical": "フェードアウト/フェードイン",
@@ -157,7 +180,7 @@ def suggest_transition(
     energy_b = float(track_b.get("energy") or track_b.get("energy_level") or 0.5)
 
     # 出点セクションが Break/Outro の場合はエネルギーが下がる傾向を考慮
-    if out_section and out_section.get("label") in ("Break", "Outro", "落ちサビ"):
+    if out_section and out_section.get("label") in ("Break", "Outro", "落ちサビ", "Bridge"):
         effective_energy_a = energy_a * 0.7
     else:
         effective_energy_a = energy_a

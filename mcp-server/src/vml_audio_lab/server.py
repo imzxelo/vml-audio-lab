@@ -20,6 +20,8 @@ from vml_audio_lab.tools.playlist import generate_playlists, get_compatible_play
 from vml_audio_lab.tools.structure import detect_structure
 from vml_audio_lab.tools.transition import suggest_transition
 from vml_audio_lab.tools.usb_export import copy_to_usb, split_artist_title, update_rekordbox_xml
+from vml_audio_lab.tools.effects import detect_effects
+from vml_audio_lab.tools.setlist import build_setlist, visualize_setlist_energy
 from vml_audio_lab.tools.visualize import spectrogram, waveform_overview
 
 mcp = FastMCP(
@@ -214,21 +216,26 @@ def visualize_waveform(
 def suggest_rekordbox_cues(
     y_path: str,
     n_segments: int | None = None,
+    genre: str | None = None,
 ) -> dict:
     """DJ用のRekordboxキュー案（A/B/C/D + Memory Cue）を生成する。
+
+    ジャンルを指定するとジャンル別のセクションラベルに基づいてキューを生成する。
+    例: R&B → Chorus/Verse/Bridge ベースのキュー、EDM → Drop/Build/Break ベース
 
     Args:
         y_path: load_audio で返された y_path
         n_segments: 構造推定のセグメント数（省略可）
+        genre: ジャンルスラグ（省略可）。analyze_genre で得た値をそのまま渡す。
 
     Returns:
         dict:
             - hot_cues: A/B/C/D
-            - memory_cues: Intro/Build/Drop/Break/Outro など
+            - memory_cues: ジャンル別ラベルのメモリーキュー
             - sections: 推定構造
             - notes: 運用メモ
     """
-    return recommend_cues(y_path, n_segments=n_segments)
+    return recommend_cues(y_path, n_segments=n_segments, genre=genre)
 
 
 @mcp.tool
@@ -309,7 +316,6 @@ def prepare_usb_track(
 
     bpm_result = detect_bpm(y_path)
     key_result = detect_key(y_path)
-    cues_result = recommend_cues(y_path)
 
     override_value = (genre_override or "").strip()
     if override_value:
@@ -323,6 +329,9 @@ def prepare_usb_track(
         }
     else:
         genre_result = detect_genre(title=title, artist=artist, y=y, sr=sr, bpm=bpm_result["bpm"])
+
+    # ジャンル情報を渡してキュー生成（R&B→Chorus/Verse等のラベル対応）
+    cues_result = recommend_cues(y_path, genre=genre_result["genre"])
 
     # ハーフタイム補正 BPM を使用
     bpm = genre_result.get("corrected_bpm", bpm_result["bpm"])
@@ -767,6 +776,113 @@ def add_to_vocal_for_house_playlist(
     from vml_audio_lab.tools.playlist import add_vocal_for_house
 
     return add_vocal_for_house(xml_path, track_id)
+
+
+@mcp.tool
+def generate_setlist(
+    tracks: list[dict],
+    energy_curve: str = "build",
+) -> dict:
+    """N曲から最適なDJセットリストを生成する。
+
+    Camelot キー互換性・BPM 進行・エネルギーフロー・ジャンル一貫性の
+    4軸で最適な再生順を計算し、各トランジションの日本語解説を生成する。
+
+    Args:
+        tracks: 分析済みトラック辞書のリスト。各トラックに以下が必要:
+            - title (str): トラック名
+            - bpm (float): BPM
+            - key_label or key (str): キーラベル
+            - camelot (str, optional): Camelot コード
+            - energy_level (float, optional): エネルギーレベル 0-1
+            - genre or genre_group (str, optional): ジャンル
+        energy_curve: "build"(低→高), "peak"(常に高), "wave"(上下)
+
+    Returns:
+        dict:
+            - ordered_tracks: 最適順のトラックリスト
+            - transitions: 各トランジション情報+日本語解説
+            - energy_flow: エネルギー値リスト
+            - weak_points: 弱いトランジション箇所
+            - overall_score: セット全体の平均スコア
+            - stats: 統計情報
+    """
+    return build_setlist(tracks=tracks, energy_curve=energy_curve)
+
+
+@mcp.tool
+def visualize_setlist(ordered_tracks: list[dict]) -> bytes:
+    """セットリストのエネルギーフロー画像を生成する。
+
+    エネルギーカーブ+BPM推移を可視化。ジャンルごとに色分け。
+
+    Args:
+        ordered_tracks: generate_setlist で返された ordered_tracks
+    """
+    return visualize_setlist_energy(ordered_tracks)
+
+
+@mcp.tool
+def analyze_effects(
+    y_path: str,
+    sections: list[dict] | None = None,
+) -> dict:
+    """楽曲内のオーディオエフェクトを検出する。
+
+    リバーブ・ディレイ・フィルタースウィープ・サイドチェインの4種類。
+    セクション情報を渡すとセクション別に検出する。
+
+    Args:
+        y_path: load_audio で返された y_path
+        sections: analyze_structure で返された sections リスト（省略可）
+    """
+    return detect_effects(y_path, sections=sections)
+
+
+@mcp.tool
+def explain_transition(
+    track_a: dict,
+    track_b: dict,
+) -> dict:
+    """2曲間のトランジションを日本語で詳しく解説する。
+
+    キー互換性・BPM変化・ジャンル相性・推奨テクニックを
+    DJ初心者にも分かる日本語で説明する。
+
+    Args:
+        track_a: トラックA。key_label, camelot, bpm, genre/genre_group を含む
+        track_b: トラックB。同上
+    """
+    from vml_audio_lab.utils.dj_context import (
+        genre_mixing_tips,
+        recommend_transition_type,
+    )
+    from vml_audio_lab.utils.teaching import (
+        explain_bpm_transition,
+        explain_genre_compatibility,
+        explain_key_transition,
+    )
+
+    camelot_a = track_a.get("camelot", "")
+    camelot_b = track_b.get("camelot", "")
+    key_a = track_a.get("key_label") or track_a.get("key", "")
+    key_b = track_b.get("key_label") or track_b.get("key", "")
+    bpm_a = float(track_a.get("bpm", 0))
+    bpm_b = float(track_b.get("bpm", 0))
+    genre_a = track_a.get("genre_group") or track_a.get("genre", "")
+    genre_b = track_b.get("genre_group") or track_b.get("genre", "")
+
+    from vml_audio_lab.tools.camelot import compatibility_score as _compat_score
+
+    key_score = _compat_score(camelot_a, camelot_b) if (camelot_a and camelot_b) else 0.0
+
+    return {
+        "key_explanation": explain_key_transition(key_a, camelot_a, key_b, camelot_b, key_score),
+        "bpm_explanation": explain_bpm_transition(bpm_a, bpm_b),
+        "genre_explanation": explain_genre_compatibility(genre_a, genre_b),
+        "transition_type": recommend_transition_type(track_a, track_b),
+        "mixing_tips": genre_mixing_tips(genre_a, genre_b),
+    }
 
 
 def main() -> None:
